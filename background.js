@@ -1,5 +1,5 @@
 // Background Service Worker — AI Meeting Copilot
-// Orchestrates audio capture, AI processing, and Supabase relay
+// Orchestrates audio capture, AI processing, and localStorage session management
 
 import { chatCompletion, whisperTranscribe, getApiKey } from './utils/api.js';
 import { SYSTEM_PROMPT, SUMMARY_PROMPT, LATE_JOINER_BRIEF_PROMPT } from './utils/prompts.js';
@@ -25,6 +25,9 @@ let meetingState = {
   timeline: [],
   audioActive: false
 };
+
+// Rolling AI context — stores last 3 AI responses for continuity
+let aiContextWindow = [];
 
 let processingInterval = null;
 let offscreenCreated = false;
@@ -86,12 +89,16 @@ async function processTranscript() {
     broadcastState();
     return;
   }
+
+  // Get user-selected model from settings
+  const { settings } = await chrome.storage.local.get('settings');
+  const model = settings?.aiModel || 'gpt-4o-mini';
   
   const transcript = meetingState.rawBuffer;
   
   try {
-    const prompt = SUMMARY_PROMPT(transcript, meetingState.summary);
-    const result = await chatCompletion(SYSTEM_PROMPT, prompt, apiKey);
+    const prompt = SUMMARY_PROMPT(transcript, meetingState.summary, aiContextWindow);
+    const result = await chatCompletion(SYSTEM_PROMPT, prompt, apiKey, model);
     
     if (result) {
       meetingState.summary = result.summary || meetingState.summary;
@@ -103,11 +110,18 @@ async function processTranscript() {
       meetingState.keyInsights = result.keyInsights || meetingState.keyInsights;
       meetingState.questionsRaised = result.questionsRaised || meetingState.questionsRaised;
       
+      // Update rolling AI context window (keep last 3)
+      aiContextWindow.push({
+        timestamp: Date.now(),
+        summary: result.summary,
+        currentTopic: result.currentTopic,
+        topicCount: (result.topics || []).length,
+        decisionCount: (result.decisions || []).length
+      });
+      if (aiContextWindow.length > 3) aiContextWindow.shift();
+      
       // Save to storage
       await chrome.storage.local.set({ meetingState: getStateSnapshot() });
-      
-      // Push state to Supabase for late joiners
-      pushStateToSupabase();
       
       // Broadcast to popup and dashboard
       broadcastState();
@@ -117,10 +131,13 @@ async function processTranscript() {
   }
 }
 
-// ——— Late Joiner Briefing ———
+// ——— Late Joiner Briefing (Local Only) ———
 async function generateLateJoinerBrief(joinerName) {
   const apiKey = await getApiKey();
   if (!apiKey) return null;
+
+  const { settings } = await chrome.storage.local.get('settings');
+  const model = settings?.aiModel || 'gpt-4o-mini';
   
   try {
     const prompt = LATE_JOINER_BRIEF_PROMPT(
@@ -132,11 +149,19 @@ async function generateLateJoinerBrief(joinerName) {
       joinerName
     );
     
-    const brief = await chatCompletion(SYSTEM_PROMPT, prompt, apiKey);
+    const brief = await chatCompletion(SYSTEM_PROMPT, prompt, apiKey, model);
     
-    if (brief && meetingState.meetingId) {
-      // Push brief to Supabase for the late joiner's extension to pick up
-      pushBriefToSupabase(meetingState.meetingId, brief, joinerName);
+    if (brief) {
+      // Show brief overlay via content script (local only, no Supabase)
+      chrome.tabs.query({ url: 'https://meet.google.com/*' }, (tabs) => {
+        tabs.forEach(tab => {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'SHOW_BRIEF',
+            briefContent: brief,
+            targetName: joinerName
+          }).catch(() => {});
+        });
+      });
     }
     
     return brief;
@@ -146,62 +171,28 @@ async function generateLateJoinerBrief(joinerName) {
   }
 }
 
-// ——— Supabase Integration ———
-async function pushBriefToSupabase(meetingId, briefContent, targetParticipant) {
-  const config = await chrome.storage.local.get(['supabase_url', 'supabase_anon_key']);
-  if (!config.supabase_url || !config.supabase_anon_key) return;
-  
-  try {
-    const response = await fetch(`${config.supabase_url}/rest/v1/meeting_briefs`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': config.supabase_anon_key,
-        'Authorization': `Bearer ${config.supabase_anon_key}`,
-        'Prefer': 'return=minimal'
-      },
-      body: JSON.stringify({
-        meeting_id: meetingId,
-        brief_content: briefContent,
-        target_participant: targetParticipant
-      })
-    });
-    
-    if (response.ok) {
-      console.log('[BG] Brief pushed to Supabase for:', targetParticipant);
-    }
-  } catch (err) {
-    console.error('[BG] Supabase push failed:', err);
-  }
+// ——— Session Management ———
+async function savePendingSession() {
+  const { pendingSession, savedSessions = [] } = await chrome.storage.local.get(['pendingSession', 'savedSessions']);
+  if (!pendingSession) return;
+
+  savedSessions.unshift({
+    ...pendingSession,
+    savedAt: Date.now(),
+    id: `session_${Date.now()}`
+  });
+
+  // Keep max 20 sessions
+  if (savedSessions.length > 20) savedSessions.pop();
+
+  await chrome.storage.local.set({ savedSessions });
+  await chrome.storage.local.remove('pendingSession');
+  console.log('[BG] Session saved');
 }
 
-async function pushStateToSupabase() {
-  const config = await chrome.storage.local.get(['supabase_url', 'supabase_anon_key']);
-  if (!config.supabase_url || !config.supabase_anon_key || !meetingState.meetingId) return;
-  
-  try {
-    await fetch(`${config.supabase_url}/rest/v1/meeting_state`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': config.supabase_anon_key,
-        'Authorization': `Bearer ${config.supabase_anon_key}`,
-        'Prefer': 'resolution=merge-duplicates,return=minimal'
-      },
-      body: JSON.stringify({
-        meeting_id: meetingState.meetingId,
-        summary: meetingState.summary,
-        topics: meetingState.topics,
-        decisions: meetingState.decisions,
-        action_items: meetingState.actionItems,
-        current_topic: meetingState.currentTopic,
-        participants: meetingState.participants,
-        updated_at: new Date().toISOString()
-      })
-    });
-  } catch (err) {
-    console.error('[BG] Supabase state push failed:', err);
-  }
+async function discardPendingSession() {
+  await chrome.storage.local.remove(['pendingSession', 'meetingState', 'lastMeetingState']);
+  console.log('[BG] Session discarded');
 }
 
 // ——— State Management ———
@@ -241,6 +232,7 @@ function resetState() {
     questionsRaised: [], participants: [], initialParticipants: [],
     lateJoiners: [], timeline: [], audioActive: false
   };
+  aiContextWindow = [];
 }
 
 // ——— Message Handler ———
@@ -253,9 +245,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       meetingState.startTime = Date.now();
       meetingState.timeline.push({ event: 'Meeting started', timestamp: Date.now(), elapsed: 0 });
       meetingState.audioActive = false;
-      
-      // Periodic AI processing will only start when audio starts (or we can start it now)
-      // processingInterval = setInterval(processTranscript, 30000);
       
       broadcastState();
       sendResponse({ success: true });
@@ -280,8 +269,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     case 'START_AUDIO_WITH_STREAM': {
-      // Popup already obtained the streamId (user-gesture context)
-      // Auto-activate meeting if content script hasn't detected it yet
       if (!meetingState.isActive) {
         resetState();
         meetingState.isActive = true;
@@ -320,8 +307,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Final AI processing
       processTranscript();
       
-      // Save final state
-      chrome.storage.local.set({ lastMeetingState: getStateSnapshot() });
+      // Store as pending session for save/discard prompt
+      const snapshot = getStateSnapshot();
+      chrome.storage.local.set({
+        pendingSession: snapshot,
+        lastMeetingState: snapshot
+      });
+
+      // Broadcast session ended for popup/dashboard to show save prompt
+      chrome.runtime.sendMessage({ type: 'SESSION_ENDED', state: snapshot }).catch(() => {});
       broadcastState();
       sendResponse({ success: true });
       break;
@@ -336,7 +330,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     
     case 'AUDIO_TRANSCRIBED': {
-      // Received from offscreen document after Whisper processing
       const { text, language } = message;
       if (text && text.trim()) {
         meetingState.transcript.push({ speaker: 'Audio', text, timestamp: Date.now() });
@@ -359,7 +352,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         
         meetingState.participants = [...currentList];
         
-        // Process late joiners
         for (const joiner of newJoiners) {
           meetingState.lateJoiners.push(joiner);
           meetingState.timeline.push({
@@ -368,7 +360,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             elapsed: Math.round((Date.now() - meetingState.startTime) / 1000)
           });
           
-          // Generate and push brief to Supabase
           generateLateJoinerBrief(joiner);
         }
       }
@@ -382,6 +373,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse(getStateSnapshot());
       break;
     }
+
+    case 'SAVE_SESSION': {
+      savePendingSession().then(() => sendResponse({ success: true }));
+      return true; // async
+    }
+
+    case 'DISCARD_SESSION': {
+      discardPendingSession().then(() => sendResponse({ success: true }));
+      return true; // async
+    }
+
+    case 'GET_SAVED_SESSIONS': {
+      chrome.storage.local.get('savedSessions', (result) => {
+        sendResponse(result.savedSessions || []);
+      });
+      return true; // async
+    }
+
+    case 'DELETE_SAVED_SESSION': {
+      chrome.storage.local.get('savedSessions', (result) => {
+        const sessions = (result.savedSessions || []).filter(s => s.id !== message.sessionId);
+        chrome.storage.local.set({ savedSessions: sessions }, () => {
+          sendResponse({ success: true });
+        });
+      });
+      return true; // async
+    }
     
     case 'OPEN_SIDE_PANEL': {
       if (sender.tab?.id) {
@@ -392,7 +410,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   }
   
-  return true; // Keep message channel open for async responses
+  return true;
 });
 
 // ——— Side Panel Behavior ———
@@ -405,7 +423,8 @@ chrome.runtime.onInstalled.addListener(() => {
     settings: {
       summarizationInterval: 30,
       autoSendBrief: true,
-      lateJoinerBriefing: true
+      lateJoinerBriefing: true,
+      aiModel: 'gpt-4o-mini'
     }
   });
 });

@@ -26,12 +26,6 @@
           </button>
         </div>
         
-        <label class="setup-label" style="margin-top: 12px;">Supabase URL <span class="optional">(for late-joiner relay)</span></label>
-        <input type="text" id="supabase-url-input" placeholder="https://your-project.supabase.co" class="setup-input">
-        
-        <label class="setup-label">Supabase Anon Key</label>
-        <input type="text" id="supabase-key-input" placeholder="eyJ..." class="setup-input">
-        
         <button id="save-keys" class="setup-btn">
           <span class="btn-text">Activate Copilot</span>
           <span class="btn-icon">
@@ -187,6 +181,22 @@
           <span class="platform-tag">Zoom (coming soon)</span>
           <span class="platform-tag">Teams (coming soon)</span>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Session Ended Modal -->
+  <div id="session-modal" class="session-modal" style="display: none;">
+    <div class="session-modal-backdrop"></div>
+    <div class="session-modal-content">
+      <div class="session-modal-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>
+      </div>
+      <div class="session-modal-title">Meeting Ended</div>
+      <div class="session-modal-text">Would you like to save this session for later review?</div>
+      <div class="session-modal-actions">
+        <button id="save-session-btn" class="session-btn save">Save Session</button>
+        <button id="discard-session-btn" class="session-btn discard">Discard</button>
       </div>
     </div>
   </div>

@@ -318,4 +318,121 @@ document.addEventListener('DOMContentLoaded', async () => {
     const s = seconds % 60;
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
+
+  // ——— Saved Sessions Tab ———
+  async function loadSavedSessions() {
+    try {
+      const sessions = await chrome.runtime.sendMessage({ type: 'GET_SAVED_SESSIONS' });
+      const container = document.getElementById('dash-sessions-list');
+      if (!sessions || sessions.length === 0) {
+        container.innerHTML = '<div class="empty-msg">No saved sessions yet. Sessions are saved when you end a meeting and click "Save".</div>';
+        return;
+      }
+
+      container.innerHTML = sessions.map(s => {
+        const date = new Date(s.savedAt || s.startTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const time = new Date(s.savedAt || s.startTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        const topicCount = s.topics?.length || 0;
+        const decisionCount = s.decisions?.length || 0;
+        const actionCount = s.actionItems?.length || 0;
+
+        return `
+          <div class="session-item" data-session-id="${s.id}">
+            <div class="session-item-header">
+              <div>
+                <div class="session-item-date">${date} at ${time}</div>
+                <div class="session-item-id">${s.meetingId || 'Unknown Meeting'}</div>
+              </div>
+              <div class="session-item-meta">
+                <span>${formatDuration(s.duration || 0)}</span>
+              </div>
+            </div>
+            <div class="session-item-summary">${s.summary || 'No summary available'}</div>
+            <div class="session-item-stats">
+              <span>${topicCount} topics</span>
+              <span>${decisionCount} decisions</span>
+              <span>${actionCount} actions</span>
+            </div>
+            <div class="session-item-actions">
+              <button class="session-export-btn" data-session-id="${s.id}" title="Export as Markdown">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" x2="12" y1="15" y2="3"></line></svg>
+                Export
+              </button>
+              <button class="session-delete-btn" data-session-id="${s.id}" title="Delete session">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                Delete
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Wire up export buttons
+      container.querySelectorAll('.session-export-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sessionId = btn.dataset.sessionId;
+          const session = sessions.find(s => s.id === sessionId);
+          if (session) exportSessionMarkdown(session);
+        });
+      });
+
+      // Wire up delete buttons
+      container.querySelectorAll('.session-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const sessionId = btn.dataset.sessionId;
+          await chrome.runtime.sendMessage({ type: 'DELETE_SAVED_SESSION', sessionId });
+          loadSavedSessions();
+        });
+      });
+    } catch (err) {
+      console.error('[Dashboard] Failed to load sessions:', err);
+    }
+  }
+
+  function exportSessionMarkdown(session) {
+    let md = `# Meeting Summary\n\n`;
+    md += `**Date:** ${new Date(session.savedAt || session.startTime).toLocaleString()}\n`;
+    md += `**Duration:** ${formatDuration(session.duration || 0)}\n`;
+    md += `**Meeting ID:** ${session.meetingId || 'N/A'}\n`;
+    md += `**Participants:** ${session.participants?.join(', ') || 'N/A'}\n\n`;
+    md += `## Summary\n${session.summary || 'N/A'}\n\n`;
+
+    if (session.topics?.length) {
+      md += `## Topics\n`;
+      session.topics.forEach(t => md += `- ${t.name} (${t.status})\n`);
+      md += '\n';
+    }
+    if (session.decisions?.length) {
+      md += `## Decisions\n`;
+      session.decisions.forEach(d => md += `- ${d.text}${d.by ? ` — ${d.by}` : ''}\n`);
+      md += '\n';
+    }
+    if (session.actionItems?.length) {
+      md += `## Action Items\n`;
+      session.actionItems.forEach(a => {
+        md += `- [ ] ${a.task}`;
+        if (a.owner) md += ` → ${a.owner}`;
+        if (a.deadline) md += ` (due: ${a.deadline})`;
+        md += '\n';
+      });
+    }
+
+    navigator.clipboard.writeText(md).then(() => {
+      alert('Session exported to clipboard as Markdown!');
+    });
+  }
+
+  // Load sessions on tab switch
+  document.querySelector('[data-tab="sessions"]')?.addEventListener('click', loadSavedSessions);
+
+  // Listen for session ended
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.type === 'SESSION_ENDED') {
+      // Reload sessions if on that tab
+      const sessionsTab = document.querySelector('[data-tab="sessions"]');
+      if (sessionsTab?.classList.contains('active')) {
+        loadSavedSessions();
+      }
+    }
+  });
 });

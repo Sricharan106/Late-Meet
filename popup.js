@@ -5,9 +5,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const mainView = document.getElementById('main-view');
   const meetingSection = document.getElementById('meeting-section');
   const noMeetingSection = document.getElementById('no-meeting-section');
+  const sessionModal = document.getElementById('session-modal');
 
   // ——— Check if API key is configured ———
-  const config = await chrome.storage.local.get(['openai_api_key', 'supabase_url', 'supabase_anon_key']);
+  const config = await chrome.storage.local.get(['openai_api_key']);
   
   if (!config.openai_api_key) {
     setupView.style.display = 'block';
@@ -17,22 +18,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     mainView.style.display = 'block';
   }
 
-  // ——— Setup: Save Keys ———
+  // ——— Setup: Save Key ———
   document.getElementById('save-keys').addEventListener('click', async () => {
     const apiKey = document.getElementById('api-key-input').value.trim();
-    const supabaseUrl = document.getElementById('supabase-url-input').value.trim();
-    const supabaseKey = document.getElementById('supabase-key-input').value.trim();
 
     if (!apiKey) {
       shakeElement(document.getElementById('api-key-input'));
       return;
     }
 
-    await chrome.storage.local.set({
-      openai_api_key: apiKey,
-      ...(supabaseUrl && { supabase_url: supabaseUrl }),
-      ...(supabaseKey && { supabase_anon_key: supabaseKey })
-    });
+    await chrome.storage.local.set({ openai_api_key: apiKey });
 
     setupView.style.display = 'none';
     mainView.style.display = 'block';
@@ -62,18 +57,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   const copilotBtn = document.getElementById('start-copilot-btn');
   copilotBtn?.addEventListener('click', async () => {
     try {
-      // Get the active Google Meet tab
       const tabs = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
       if (tabs.length === 0) {
         console.warn('No Google Meet tab found');
         return;
       }
       const meetTab = tabs[0];
-
-      // Obtain streamId from popup (user-gesture context required)
       const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: meetTab.id });
 
-      // Send streamId to background to set up offscreen capture
       await chrome.runtime.sendMessage({
         type: 'START_AUDIO_WITH_STREAM',
         streamId: streamId,
@@ -101,6 +92,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // ——— Session Save/Discard Modal ———
+  function showSessionModal() {
+    sessionModal.style.display = 'flex';
+    requestAnimationFrame(() => sessionModal.classList.add('visible'));
+  }
+
+  function hideSessionModal() {
+    sessionModal.classList.remove('visible');
+    setTimeout(() => { sessionModal.style.display = 'none'; }, 300);
+  }
+
+  document.getElementById('save-session-btn')?.addEventListener('click', async () => {
+    await chrome.runtime.sendMessage({ type: 'SAVE_SESSION' });
+    hideSessionModal();
+  });
+
+  document.getElementById('discard-session-btn')?.addEventListener('click', async () => {
+    await chrome.runtime.sendMessage({ type: 'DISCARD_SESSION' });
+    hideSessionModal();
+  });
+
+  // ——— Check for pending session on load ———
+  const { pendingSession } = await chrome.storage.local.get('pendingSession');
+  if (pendingSession && !pendingSession.isActive) {
+    showSessionModal();
+  }
+
   // ——— Get Current State ———
   try {
     const state = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
@@ -115,6 +133,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'STATE_UPDATE') {
       updateUI(message.state);
+    }
+    if (message.type === 'SESSION_ENDED') {
+      showSessionModal();
     }
   });
 
@@ -136,33 +157,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       meetingSection.style.display = 'block';
       noMeetingSection.style.display = 'none';
       
-      // Status
       const badge = document.getElementById('status-badge');
       badge.className = 'status-badge active';
       badge.querySelector('.status-text').textContent = 'Recording...';
       
-      // Meeting ID
       document.getElementById('meeting-id').textContent = state.meetingId || '—';
       
-      // Duration
       if (state.startTime) startDurationTimer(state.startTime);
       
-      // Summary
       document.getElementById('summary-text').textContent = state.summary || 'Waiting for conversation...';
-      
-      // Current Topic
       document.getElementById('current-topic').textContent = state.currentTopic || 'Detecting...';
       
-      // Stats
       document.getElementById('participant-count').textContent = state.participants?.length || 0;
       document.getElementById('decision-count').textContent = state.decisions?.length || 0;
       document.getElementById('action-count').textContent = state.actionItems?.length || 0;
       document.getElementById('sentiment-icon').textContent = getSentimentEmoji(state.sentiment);
 
-      // Audio capture status
       setCopilotActive(state.audioActive || false);
       
-      // Topics List
       const topicsList = document.getElementById('topics-list');
       if (state.topics && state.topics.length > 0) {
         topicsList.innerHTML = state.topics.map(t => `
@@ -174,7 +186,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         `).join('');
       }
       
-      // Late Joiners
       const lateSection = document.getElementById('late-joiners-section');
       const lateList = document.getElementById('late-joiners-list');
       if (state.lateJoiners && state.lateJoiners.length > 0) {

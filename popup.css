@@ -621,3 +621,101 @@ body::-webkit-scrollbar-thumb {
   color: #000000;
   border-color: #FFFFFF;
 }
+
+/* ——— Session Ended Modal ——— */
+.session-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.session-modal.visible {
+  opacity: 1;
+}
+
+.session-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
+}
+
+.session-modal-content {
+  position: relative;
+  background: #0A0A0A;
+  border: 1px solid #262626;
+  border-radius: 16px;
+  padding: 32px 24px;
+  text-align: center;
+  width: 320px;
+  transform: translateY(16px);
+  transition: transform 0.3s ease;
+}
+
+.session-modal.visible .session-modal-content {
+  transform: translateY(0);
+}
+
+.session-modal-icon {
+  color: #FFFFFF;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.session-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin-bottom: 8px;
+}
+
+.session-modal-text {
+  font-size: 13px;
+  color: #A3A3A3;
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+.session-modal-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.session-btn {
+  flex: 1;
+  padding: 12px;
+  border: none;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.session-btn.save {
+  background: #FFFFFF;
+  color: #000000;
+}
+
+.session-btn.save:hover {
+  background: #E5E5E5;
+}
+
+.session-btn.discard {
+  background: transparent;
+  color: #A3A3A3;
+  border: 1px solid #262626;
+}
+
+.session-btn.discard:hover {
+  background: #171717;
+  color: #FFFFFF;
+  border-color: #404040;
+}

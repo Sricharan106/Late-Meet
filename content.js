@@ -1,6 +1,6 @@
 // Content Script — Google Meet Integration
 // Injected into Google Meet pages to detect meetings, monitor participants,
-// and display private late-joiner briefs via Supabase Realtime
+// and display private late-joiner briefs locally
 
 (function() {
   'use strict';
@@ -10,7 +10,6 @@
   let participantPollInterval = null;
   let previousParticipants = [];
   let meetingId = null;
-  let supabaseRealtimeSetup = false;
   let briefOverlayVisible = false;
 
   // ——— Meeting Detection ———
@@ -21,15 +20,11 @@
   }
 
   function detectMeeting() {
-    // Check if we're in an active Google Meet call
-    // Primary indicator: the "Leave call" button only exists when connected to a call
     const leaveCallBtn = document.querySelector('button[aria-label="Leave call"]');
-    // Fallback: check for other in-call indicators
     const inCallIndicator = leaveCallBtn ||
                              document.querySelector('[data-meeting-code]') ||
                              document.querySelector('[data-unresolved-meeting-id]');
 
-    // Also verify we're on a valid meeting URL (xxx-xxxx-xxx pattern)
     const url = window.location.href;
     const isMeetUrl = /meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}/.test(url);
 
@@ -39,21 +34,14 @@
       
       console.log(`${COPILOT_PREFIX} Meeting detected: ${meetingId}`);
       
-      // Notify background
       chrome.runtime.sendMessage({
         type: 'MEETING_STARTED',
         meetingId: meetingId,
         url: window.location.href
       });
 
-      // Inject floating dashboard button
       injectFloatingButton();
-      
-      // Start participant monitoring
       startParticipantMonitoring();
-      
-      // Subscribe to Supabase for incoming briefs (for late joiner scenario)
-      subscribeToSupabaseBriefs();
     }
   }
 
@@ -61,11 +49,10 @@
   function getParticipantNames() {
     const names = new Set();
     
-    // Method 1: Participant panel (when open)
     const participantItems = document.querySelectorAll(
       '[data-participant-id] [data-self-name],' +
-      '.zWGUib,' +  // Participant name in the list
-      '.cS7aqe.NkoGfe' // Participant tile names
+      '.zWGUib,' +
+      '.cS7aqe.NkoGfe'
     );
     
     participantItems.forEach(el => {
@@ -75,7 +62,6 @@
       }
     });
     
-    // Method 2: Video tiles with names
     const videoTiles = document.querySelectorAll('.KV1GEc, .dwSJ2e');
     videoTiles.forEach(tile => {
       const nameEl = tile.querySelector('.XEazBc, .zs7s8d, .ZjFb7c');
@@ -85,7 +71,6 @@
       }
     });
     
-    // Method 3: Captions speaker names
     const captionNames = document.querySelectorAll('.zs7s8d.jxFHg');
     captionNames.forEach(el => {
       const name = el.textContent?.trim();
@@ -100,7 +85,6 @@
       const currentParticipants = getParticipantNames();
       
       if (currentParticipants.length > 0) {
-        // Check for changes
         const hasChanged = currentParticipants.length !== previousParticipants.length ||
           currentParticipants.some(p => !previousParticipants.includes(p));
         
@@ -113,50 +97,7 @@
           previousParticipants = [...currentParticipants];
         }
       }
-    }, 5000); // Check every 5 seconds
-  }
-
-  // ——— Supabase Realtime Subscription (for receiving briefs as late joiner) ———
-  async function subscribeToSupabaseBriefs() {
-    if (supabaseRealtimeSetup || !meetingId) return;
-    
-    const config = await chrome.storage.local.get(['supabase_url', 'supabase_anon_key']);
-    if (!config.supabase_url || !config.supabase_anon_key) {
-      console.log(`${COPILOT_PREFIX} Supabase not configured — brief relay disabled`);
-      return;
-    }
-    
-    supabaseRealtimeSetup = true;
-    
-    // Poll for briefs (simpler than Realtime in content script context)
-    setInterval(async () => {
-      try {
-        const response = await fetch(
-          `${config.supabase_url}/rest/v1/meeting_briefs?meeting_id=eq.${meetingId}&order=created_at.desc&limit=1`,
-          {
-            headers: {
-              'apikey': config.supabase_anon_key,
-              'Authorization': `Bearer ${config.supabase_anon_key}`
-            }
-          }
-        );
-        
-        if (response.ok) {
-          const briefs = await response.json();
-          if (briefs.length > 0) {
-            const latestBrief = briefs[0];
-            const briefAge = Date.now() - new Date(latestBrief.created_at).getTime();
-            
-            // Only show if brief is less than 30 seconds old (fresh)
-            if (briefAge < 30000 && !briefOverlayVisible) {
-              showBriefOverlay(latestBrief.brief_content, latestBrief.target_participant);
-            }
-          }
-        }
-      } catch (err) {
-        // Silent fail — network might be intermittent
-      }
-    }, 10000); // Poll every 10 seconds
+    }, 5000);
   }
 
   // ——— Private Brief Overlay ———
@@ -209,19 +150,16 @@
     
     document.body.appendChild(overlay);
     
-    // Animate in
     requestAnimationFrame(() => {
       overlay.classList.add('mc-visible');
     });
     
-    // Close button
     document.getElementById('mc-close-brief').addEventListener('click', () => {
       overlay.classList.remove('mc-visible');
       setTimeout(() => overlay.remove(), 300);
       briefOverlayVisible = false;
     });
     
-    // Auto-dismiss after 30 seconds
     setTimeout(() => {
       if (overlay.parentNode) {
         overlay.classList.remove('mc-visible');
@@ -253,7 +191,6 @@
     
     document.body.appendChild(btn);
     
-    // Animate in
     requestAnimationFrame(() => {
       btn.classList.add('mc-visible');
     });
@@ -263,10 +200,7 @@
   function detectMeetingEnd() {
     if (!meetingDetected) return;
 
-    // Primary check: "Leave call" button disappears when you leave
     const leaveCallBtn = document.querySelector('button[aria-label="Leave call"]');
-
-    // Secondary checks: explicit "you left" indicators
     const youLeftText = document.body.innerText.includes('You left the meeting');
     const rejoinBtn = document.querySelector('[jsname="oI7Fj"]');
     const returnHomeBtn = document.querySelector('.CRFCdf');
@@ -286,13 +220,12 @@
         participantPollInterval = null;
       }
       
-      // Remove floating button
       const btn = document.getElementById('mc-float-btn');
       if (btn) btn.remove();
     }
   }
 
-  // ——— Listen for state updates from background ———
+  // ——— Listen for messages from background ———
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'SHOW_BRIEF') {
       showBriefOverlay(message.briefContent, message.targetName);
@@ -305,10 +238,8 @@
   function init() {
     console.log(`${COPILOT_PREFIX} Content script loaded on Google Meet`);
     
-    // Try to detect meeting immediately
     detectMeeting();
     
-    // Keep checking for meeting start (user might not be in call yet)
     const meetingCheckInterval = setInterval(() => {
       if (!meetingDetected) {
         detectMeeting();
@@ -317,7 +248,6 @@
       }
     }, 3000);
     
-    // Also observe DOM for dynamic changes
     const observer = new MutationObserver(() => {
       if (!meetingDetected) {
         detectMeeting();
@@ -330,7 +260,6 @@
     });
   }
 
-  // Wait for page to be ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {

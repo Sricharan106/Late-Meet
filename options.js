@@ -4,8 +4,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ——— Load saved settings ———
   const config = await chrome.storage.local.get([
     'openai_api_key',
-    'supabase_url',
-    'supabase_anon_key',
     'settings'
   ]);
 
@@ -14,12 +12,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Populate fields
   if (config.openai_api_key) {
     document.getElementById('openai-key').value = config.openai_api_key;
-  }
-  if (config.supabase_url) {
-    document.getElementById('supabase-url').value = config.supabase_url;
-  }
-  if (config.supabase_anon_key) {
-    document.getElementById('supabase-key').value = config.supabase_anon_key;
   }
 
   // Interval slider
@@ -55,8 +47,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ——— Save ———
   document.getElementById('save-btn').addEventListener('click', async () => {
     const openaiKey = document.getElementById('openai-key').value.trim();
-    const supabaseUrl = document.getElementById('supabase-url').value.trim();
-    const supabaseKey = document.getElementById('supabase-key').value.trim();
 
     const newSettings = {
       summarizationInterval: parseInt(intervalSlider.value),
@@ -71,8 +61,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const saveData = { settings: newSettings };
     
     if (openaiKey) saveData.openai_api_key = openaiKey;
-    if (supabaseUrl) saveData.supabase_url = supabaseUrl;
-    if (supabaseKey) saveData.supabase_anon_key = supabaseKey;
 
     await chrome.storage.local.set(saveData);
 

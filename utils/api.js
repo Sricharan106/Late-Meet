@@ -1,4 +1,4 @@
-// OpenAI API wrapper for Meeting Copilot
+// OpenAI API wrapper for Meeting Copilot — Enhanced with dynamic model selection
 
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions';
@@ -13,8 +13,12 @@ export async function getApiKey() {
 
 /**
  * Call OpenAI Chat Completions API
+ * @param {string} systemPrompt - System prompt for the AI
+ * @param {string} userPrompt - User prompt with transcript data
+ * @param {string} apiKey - OpenAI API key
+ * @param {string} model - Model to use (default: gpt-4o-mini)
  */
-export async function chatCompletion(systemPrompt, userPrompt, apiKey) {
+export async function chatCompletion(systemPrompt, userPrompt, apiKey, model = 'gpt-4o-mini') {
   if (!apiKey) throw new Error('OpenAI API key not configured');
 
   const response = await fetch(OPENAI_CHAT_URL, {
@@ -24,13 +28,13 @@ export async function chatCompletion(systemPrompt, userPrompt, apiKey) {
       'Authorization': `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
+      model: model,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      temperature: 0.3,
-      max_tokens: 2000,
+      temperature: 0.2,      // Lowered from 0.3 for more consistent, precise extraction
+      max_tokens: 3000,       // Increased from 2000 for richer responses
       response_format: { type: 'json_object' }
     })
   });
@@ -61,7 +65,6 @@ export async function whisperTranscribe(audioBlob, apiKey) {
   formData.append('file', audioBlob, 'audio.webm');
   formData.append('model', 'whisper-1');
   formData.append('response_format', 'verbose_json');
-  // No language param → Whisper auto-detects language
 
   const response = await fetch(OPENAI_WHISPER_URL, {
     method: 'POST',
