@@ -15,15 +15,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  // ——— State Management ———
+  let lastState = null;
+
   // ——— Initial State ———
   try {
-    const state = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
-    if (state) updateDashboard(state);
+    lastState = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
+    if (lastState) updateDashboard(lastState);
   } catch { /* no meeting data yet */ }
 
   // ——— Listen for State Updates ———
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'STATE_UPDATE') {
+      lastState = message.state;
       updateDashboard(message.state);
     }
     if (message.type === 'SESSION_ENDED') {
@@ -38,6 +42,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ——— Start Audio Capture (User Gesture via tabCapture) ———
   const audioBtn = document.getElementById('dash-start-audio-btn');
   audioBtn?.addEventListener('click', async () => {
+    if (lastState?.audioActive) {
+      console.log('[Dashboard] Audio already active, skipping.');
+      return;
+    }
+
     try {
       audioBtn.disabled = true;
       audioBtn.textContent = 'Starting...';
@@ -54,8 +63,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       const streamId = await new Promise((resolve) => {
         chrome.tabCapture.getMediaStreamId({ targetTabId: meetTab.id }, (id) => {
           if (chrome.runtime.lastError) {
-            console.error('[Dashboard] getMediaStreamId error:', chrome.runtime.lastError.message);
-            resolve(null);
+            const err = chrome.runtime.lastError.message;
+            console.error('[Dashboard] getMediaStreamId error:', err);
+            if (err.includes('active stream')) {
+              resolve('ALREADY_CAPTURING');
+            } else {
+              resolve(null);
+            }
           } else {
             resolve(id);
           }
@@ -63,7 +77,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
 
       if (!streamId) {
-        throw new Error('Capture permission denied. Try clicking the "Start Audio" button again.');
+        throw new Error('Capture permission denied. Try clicking "Start Audio" again.');
+      }
+
+      if (streamId === 'ALREADY_CAPTURING') {
+        setAudioBtnActive(true);
+        return;
       }
 
       const response = await chrome.runtime.sendMessage({

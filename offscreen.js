@@ -16,20 +16,15 @@ const BASE64_CHUNK_SIZE = 0x8000;
 let consecutiveSilent = 0;
 let isFlushInProgress = false;
 
-function toBase64(arrayBuffer) {
-  const bytes = new Uint8Array(arrayBuffer);
-  const chunks = [];
-
-  for (let i = 0; i < bytes.length; i += BASE64_CHUNK_SIZE) {
-    const slice = bytes.subarray(i, i + BASE64_CHUNK_SIZE);
-    let chunk = '';
-    for (let j = 0; j < slice.length; j += 1) {
-      chunk += String.fromCharCode(slice[j]);
-    }
-    chunks.push(chunk);
-  }
-
-  return btoa(chunks.join(''));
+function blobToBase64(blob) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64String = reader.result.split(',')[1];
+      resolve(base64String);
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 
 function pickSupportedMimeType() {
@@ -79,14 +74,15 @@ async function flushAudioChunk() {
 }
 
 async function postChunk(blob) {
-  if (!blob || blob.size === 0) return;
+  if (!blob || blob.size < 1024) return; // Ignore tiny chunks (<1KB) to avoid API errors
 
-  const buffer = await blob.arrayBuffer();
-  const audioBase64 = toBase64(buffer);
+  const audioBase64 = await blobToBase64(blob);
+  const mimeType = mediaRecorder?.mimeType || 'audio/webm';
 
   await chrome.runtime.sendMessage({
     type: 'OFFSCREEN_AUDIO_CHUNK',
-    audioBase64
+    audioBase64,
+    mimeType
   });
 }
 

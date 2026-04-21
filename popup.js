@@ -60,6 +60,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const textEl = btn.querySelector('.copilot-btn-text');
     const originalText = textEl?.textContent || 'Start';
 
+    if (state.audioActive) {
+      console.log('[LateMeet] Audio already active, skipping capture request.');
+      return;
+    }
+
     try {
       // Show loading state
       btn.disabled = true;
@@ -80,8 +85,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       const streamId = await new Promise((resolve) => {
         chrome.tabCapture.getMediaStreamId({ targetTabId: meetTab.id }, (id) => {
           if (chrome.runtime.lastError) {
-            console.error('[LateMeet] Popup getMediaStreamId error:', chrome.runtime.lastError.message);
-            resolve(null);
+            const err = chrome.runtime.lastError.message;
+            console.error('[LateMeet] Popup getMediaStreamId error:', err);
+            // If already capturing, we can treat it as success or inform the background
+            if (err.includes('active stream')) {
+              resolve('ALREADY_CAPTURING');
+            } else {
+              resolve(null);
+            }
           } else {
             resolve(id);
           }
@@ -90,6 +101,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (!streamId) {
         throw new Error('Capture permission denied. Try clicking the extension icon again on the Meet tab.');
+      }
+
+      if (streamId === 'ALREADY_CAPTURING') {
+        setCopilotActive(true);
+        return;
       }
 
       const response = await chrome.runtime.sendMessage({

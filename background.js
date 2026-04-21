@@ -155,15 +155,22 @@ async function closeOffscreenDocumentIfPresent() {
   }
 }
 
-async function transcribeChunk(base64Audio) {
+async function transcribeChunk(base64Audio, mimeType = 'audio/webm') {
   const apiKey = await getApiKey();
   if (!apiKey) return null;
 
+  // Determine correct file extension for OpenAI Whisper API
+  let extension = 'webm';
+  if (mimeType.includes('ogg')) extension = 'ogg';
+  else if (mimeType.includes('mp3')) extension = 'mp3';
+  else if (mimeType.includes('wav')) extension = 'wav';
+  else if (mimeType.includes('flac')) extension = 'flac';
+
   const bytes = Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0));
-  const blob = new Blob([bytes], { type: 'audio/webm' });
+  const blob = new Blob([bytes], { type: mimeType });
 
   const formData = new FormData();
-  formData.append('file', blob, 'audio.webm');
+  formData.append('file', blob, `audio.${extension}`);
   formData.append('model', 'whisper-1');
   formData.append('response_format', 'verbose_json');
 
@@ -547,7 +554,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         try {
-          const text = await transcribeChunk(message.audioBase64);
+          const text = await transcribeChunk(message.audioBase64, message.mimeType);
           if (text) {
             state.transcript.push({ speaker: 'Audio', text, timestamp: Date.now() });
             await summarizeTranscriptIfNeeded();
