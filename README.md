@@ -73,39 +73,39 @@ The extension is built natively on Manifest V3 using **TypeScript and Vite 5** f
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Google Meet Tab                       │
-│                  (meet.google.com)                       │
+│                    Google Meet Tab                      │
+│                  (meet.google.com)                      │
 └──────────────┬──────────────────────────────────────────┘
                │ Audio stream via chrome.tabCapture
                ▼
 ┌──────────────────────────┐    ┌─────────────────────────┐
-│   Offscreen Document     │    │    Content Script        │
-│   (offscreen.ts)         │    │    (content.ts)          │
-│                          │    │                          │
-│  • Audio chunk capture   │    │  • Floating UI buttons   │
-│  • MediaRecorder API     │    │  • Late-joiner overlays  │
-│  • Stream processing     │    │  • Chat automation       │
+│   Offscreen Document     │    │    Content Script       │
+│   (offscreen.ts)         │    │    (content.ts)         │
+│                          │    │                         │
+│  • Audio chunk capture   │    │  • Floating UI buttons  │
+│  • MediaRecorder API     │    │  • Late-joiner overlays │
+│  • Stream processing     │    │  • Chat automation      │
 └──────────┬───────────────┘    └──────────┬──────────────┘
            │ Audio blobs                   │ UI events
            ▼                               ▼
 ┌─────────────────────────────────────────────────────────┐
-│              Background Service Worker                   │
-│              (background.ts — The Conductor)             │
-│                                                          │
-│  • Central state manager        • Meeting detection      │
-│  • Audio routing to STT APIs    • Participant tracking   │
-│  • LLM summarization calls      • Late-joiner briefings  │
-│  • Session lifecycle mgmt       • Message coordination   │
+│              Background Service Worker                  │
+│              (background.ts — The Conductor)            │
+│                                                         │
+│  • Central state manager        • Meeting detection     │
+│  • Audio routing to STT APIs    • Participant tracking  │
+│  • LLM summarization calls      • Late-joiner briefings │
+│  • Session lifecycle mgmt       • Message coordination  │
 └──────┬───────────────┬──────────────────┬───────────────┘
        │               │                  │
        ▼               ▼                  ▼
 ┌──────────┐   ┌──────────────┐   ┌──────────────────────┐
-│ElevenLabs│   │   OpenAI     │   │ chrome.storage.local  │
+│ElevenLabs│   │   OpenAI     │   │ chrome.storage.local │
 │ Scribe   │   │   GPT API   │   │                       │
-│ STT API  │   │              │   │  • Transcripts        │
-│          │   │  • Summaries │   │  • Summaries          │
-│ Fallback:│   │  • Insights  │   │  • Action items       │
-│ Whisper  │   │  • Actions   │   │  • API keys           │
+│ STT API  │   │              │   │  • Transcripts       │
+│          │   │  • Summaries │   │  • Summaries         │
+│ Fallback:│   │  • Insights  │   │  • Action items      │
+│ Whisper  │   │  • Actions   │   │  • API keys          │
 └──────────┘   └──────────────┘   └──────────────────────┘
                                               │
                                               ▼
