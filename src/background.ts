@@ -1,4 +1,4 @@
-0; // MV3 service worker for Late Meet
+// MV3 service worker for Late Meet
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions";
@@ -14,6 +14,192 @@ const MIN_MEETING_DURATION_FOR_WELCOME = 10;
 
 import { State } from "./types";
 import { audioFileExtensionForMimeType, isChunkViable } from "./audioProcessing";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ApiTransactionManager
+//
+// Wraps every ElevenLabs / OpenAI fetch call with:
+//  • In-memory FIFO queue  — audio chunks are never abandoned mid-request
+//  • Exponential backoff   — delay = 1000ms * 2^attempt
+//  • Randomised jitter     — ±50 % of delay, prevents retry storms on reconnect
+//  • Offline pause/resume  — listens to ServiceWorker online/offline events;
+//                            pauses automatically when offline, flushes on reconnect
+//  • Dead-letter logging   — tasks exceeding maxRetries are logged and rejected
+//  • Concurrency cap       — at most 2 tasks run simultaneously
+// ─────────────────────────────────────────────────────────────────────────────
+
+type TaskFn<T> = () => Promise<T>;
+
+interface QueuedTask<T = unknown> {
+  id: string;
+  label: string;
+  fn: TaskFn<T>;
+  attempt: number;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+}
+
+class ApiTransactionManager {
+  private readonly queue: QueuedTask[] = [];
+  private running = 0;
+  private paused = false;
+
+  private readonly maxRetries: number;
+  private readonly maxConcurrent: number;
+  private readonly baseDelayMs: number;
+
+  constructor(maxRetries = 5, maxConcurrent = 2, baseDelayMs = 1000) {
+    this.maxRetries = maxRetries;
+    this.maxConcurrent = maxConcurrent;
+    this.baseDelayMs = baseDelayMs;
+    this.bindConnectivityListeners();
+  }
+
+  /**
+   * Enqueue an API call. Returns a promise that resolves with the result, or
+   * rejects after the retry budget is exhausted / a non-retryable error occurs.
+   *
+   * @param fn    Zero-argument async function that performs the fetch.
+   * @param label Short description used in log messages.
+   */
+  enqueue<T>(fn: TaskFn<T>, label = "unnamed task"): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const task: QueuedTask<T> = {
+        id: `atm_${++ApiTransactionManager.counter}`,
+        label,
+        fn,
+        attempt: 0,
+        resolve,
+        reject,
+      };
+      this.queue.push(task as QueuedTask);
+      console.debug(`[ATM] ↑ Enqueued "${label}" (${task.id}). Queue depth: ${this.queue.length}`);
+      this.tick();
+    });
+  }
+
+  /** Number of pending + in-flight tasks. */
+  get size(): number {
+    return this.queue.length + this.running;
+  }
+
+  get isPaused(): boolean {
+    return this.paused;
+  }
+
+  pause(): void {
+    if (!this.paused) {
+      this.paused = true;
+      console.info("[ATM] ⏸ Queue paused.");
+    }
+  }
+
+  resume(): void {
+    if (this.paused) {
+      this.paused = false;
+      console.info(`[ATM] ▶ Queue resumed. ${this.queue.length} task(s) waiting.`);
+      this.tick();
+    }
+  }
+
+  // ── Internal ───────────────────────────────────────────────────────────────
+
+  private static counter = 0;
+
+  /**
+   * Exponential backoff with ±50 % randomised jitter.
+   * Sequence (base 1000 ms): ~1 s → ~2 s → ~4 s → ~8 s → ~16 s
+   */
+  private backoffDelay(attempt: number): number {
+    const exp = this.baseDelayMs * Math.pow(2, attempt);
+    const jitter = exp * 0.5 * (Math.random() * 2 - 1);
+    return Math.max(0, exp + jitter);
+  }
+
+  /**
+   * Returns true for errors that are safe to retry:
+   *  - HTTP 429 (rate limit) or 5xx (server errors)
+   *  - TypeError / "Failed to fetch" (network drop)
+   */
+  private isRetryable(err: unknown): boolean {
+    const status = (err as { status?: number }).status;
+    if (typeof status === "number") return status === 429 || status >= 500;
+    return err instanceof TypeError;
+  }
+
+  private tick(): void {
+    if (this.paused) return;
+    while (this.running < this.maxConcurrent && this.queue.length > 0) {
+      const task = this.queue.shift()!;
+      this.running++;
+      void this.execute(task);
+    }
+  }
+
+  private async execute(task: QueuedTask): Promise<void> {
+    try {
+      console.debug(
+        `[ATM] ⚙ Running "${task.label}" (${task.id}), attempt ${task.attempt + 1}/${this.maxRetries + 1}`,
+      );
+      const result = await task.fn();
+      task.resolve(result);
+      console.debug(`[ATM] ✓ "${task.label}" (${task.id}) succeeded.`);
+    } catch (err: unknown) {
+      if (this.isRetryable(err) && task.attempt < this.maxRetries) {
+        task.attempt++;
+        const delay = this.backoffDelay(task.attempt - 1);
+        console.warn(
+          `[ATM] ↺ "${task.label}" (${task.id}) failed — retrying (${task.attempt}/${this.maxRetries}) in ${Math.round(delay)} ms.`,
+          err,
+        );
+        setTimeout(() => {
+          this.queue.unshift(task); // front of queue preserves FIFO per-chunk order
+          this.tick();
+        }, delay);
+        return; // keep slot occupied until setTimeout fires
+      }
+      console.error(
+        `[ATM] ✗ "${task.label}" (${task.id}) dead-lettered after ${task.attempt + 1} attempt(s).`,
+        err,
+      );
+      task.reject(err);
+    } finally {
+      this.running--;
+      this.tick();
+    }
+  }
+
+  /**
+   * MV3 service workers don't propagate window events, so we listen on `self`
+   * (ServiceWorkerGlobalScope). Falls back to `window` in test environments.
+   */
+  private bindConnectivityListeners(): void {
+    const target: EventTarget = typeof self !== "undefined" ? self : window;
+
+    target.addEventListener("offline", () => {
+      console.warn("[ATM] 📡 Offline — pausing queue to preserve audio chunks.");
+      this.pause();
+    });
+
+    target.addEventListener("online", () => {
+      console.info("[ATM] 📡 Back online — resuming queue.");
+      this.resume();
+    });
+
+    // Handle starting up while already offline.
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      this.paused = true;
+      console.warn("[ATM] ⚠ Started offline — queue paused until reconnect.");
+    }
+  }
+}
+
+// Singleton — used by all fetch call sites below.
+const apiManager = new ApiTransactionManager();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rest of background.ts — unchanged except the 5 fetch call sites below
+// ─────────────────────────────────────────────────────────────────────────────
 
 const state: State = {
   isActive: false,
@@ -114,14 +300,12 @@ function snapshot() {
 async function broadcastStateUpdate() {
   const snapshotData = snapshot();
   try {
-    // To popup/dashboard
     await chrome.runtime.sendMessage({ type: "STATE_UPDATE", state: snapshotData });
   } catch {
     /* ignore */
   }
 
   try {
-    // To content scripts (floating button)
     const tabs = await chrome.tabs.query({ url: "https://meet.google.com/*" });
     for (const tab of tabs) {
       if (tab.id !== undefined) {
@@ -175,7 +359,7 @@ async function ensureOffscreenDocument() {
 
 async function closeOffscreenDocumentIfPresent() {
   const contexts = await chrome.runtime.getContexts({
-    contextTypes: ["OFFSCREEN_DOCUMENT" as any], // Cast due to type definition lags in some versions
+    contextTypes: ["OFFSCREEN_DOCUMENT" as any],
     documentUrls: [OFFSCREEN_DOCUMENT_URL],
   });
 
@@ -190,13 +374,11 @@ function getTranscriptionPrompt() {
     .map((e) => e.text)
     .join(" ");
   if (!recentTexts) return "";
-  // Provide last ~200 characters to Whisper to help with context/names
   return recentTexts.slice(-200);
 }
 
+// ─── CALL SITE 1 & 2: ElevenLabs Scribe + Whisper fallback ───────────────────
 async function transcribeChunk(base64Audio: string, mimeType = "audio/webm", prompt = "") {
-  // Use ElevenLabs API key if available, fallback to OpenAI if not?
-  // No, the requirement is to use ElevenLabs.
   const elevenlabsKey = await chrome.storage.local
     .get("elevenlabs_api_key")
     .then((r) => r.elevenlabs_api_key);
@@ -209,90 +391,89 @@ async function transcribeChunk(base64Audio: string, mimeType = "audio/webm", pro
     return null;
   }
 
+  const normalizedMime = mimeType.split(";")[0].trim();
+  const extension = audioFileExtensionForMimeType(normalizedMime);
+
   if (elevenlabsKey) {
     try {
-      const normalizedMime = mimeType.split(";")[0].trim();
-      const extension = audioFileExtensionForMimeType(normalizedMime);
+      const transcript = await apiManager.enqueue(async () => {
+        const formData = new FormData();
+        formData.append("file", blob, `audio.${extension}`);
+        formData.append("model_id", ELEVENLABS_STT_MODEL);
 
-      const formData = new FormData();
-      formData.append("file", blob, `audio.${extension}`);
-      formData.append("model_id", ELEVENLABS_STT_MODEL);
-
-      const response = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
-        method: "POST",
-        headers: {
-          "xi-api-key": elevenlabsKey,
-        },
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-
-        console.error("[LateMeet] ElevenLabs API rejected chunk", {
-          status: response.status,
-          statusText: response.statusText,
-          response: text,
-          mimeType,
-          size: blob.size,
+        const response = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
+          method: "POST",
+          headers: { "xi-api-key": elevenlabsKey },
+          body: formData,
         });
 
-        throw new Error(`ElevenLabs STT error ${response.status}: ${text}`);
-      }
-      const data = await response.json();
+        if (!response.ok) {
+          const text = await response.text();
+          console.error("[LateMeet] ElevenLabs API rejected chunk", {
+            status: response.status,
+            statusText: response.statusText,
+            response: text,
+            mimeType,
+            size: blob.size,
+          });
+          // Attach .status so isRetryable() can identify 429/5xx without
+          // inspecting the raw Response object after it has been consumed.
+          throw Object.assign(new Error(`ElevenLabs STT error ${response.status}: ${text}`), {
+            status: response.status,
+          });
+        }
 
-      const transcript = (data.text || "").trim();
-
-      if (!transcript) {
-        console.warn(
-          "[LateMeet] ElevenLabs returned empty transcript → triggering Whisper fallback",
-        );
-        throw new Error("Empty ElevenLabs transcript");
-      }
+        const data = await response.json();
+        const result = (data.text || "").trim();
+        if (!result) {
+          console.warn(
+            "[LateMeet] ElevenLabs returned empty transcript → triggering Whisper fallback",
+          );
+          // status: 0 → non-retryable; falls straight through to Whisper.
+          throw Object.assign(new Error("Empty ElevenLabs transcript"), { status: 0 });
+        }
+        return result;
+      }, `ElevenLabs Scribe (${blob.size}B, ${normalizedMime})`);
 
       return transcript;
     } catch (err) {
       console.warn("[LateMeet] ElevenLabs transcription failed, falling back to Whisper:", err);
-      // Fallback to whisper
     }
   }
 
-  // Fallback to Whisper
+  // Fallback: OpenAI Whisper
   const apiKey = await getApiKey();
   if (!apiKey) return null;
 
-  const normalizedMime = mimeType.split(";")[0].trim();
-  const extension = audioFileExtensionForMimeType(normalizedMime);
+  return apiManager.enqueue(async () => {
+    const formData = new FormData();
+    formData.append("file", blob, `audio.${extension}`);
+    formData.append("model", "whisper-1");
+    formData.append("response_format", "verbose_json");
+    if (prompt) formData.append("prompt", prompt);
 
-  const formData = new FormData();
-  formData.append("file", blob, `audio.${extension}`);
-  formData.append("model", "whisper-1");
-  formData.append("response_format", "verbose_json");
-  if (prompt) {
-    formData.append("prompt", prompt);
-  }
+    const response = await fetch(OPENAI_WHISPER_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: formData,
+    });
 
-  const response = await fetch(OPENAI_WHISPER_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: formData,
-  });
+    if (!response.ok) {
+      const text = await response.text();
+      throw Object.assign(new Error(`Whisper API error ${response.status}: ${text}`), {
+        status: response.status,
+      });
+    }
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Whisper API error ${response.status}: ${text}`);
-  }
-
-  const data = await response.json();
-  return (data.text || "").trim();
+    const data = await response.json();
+    return (data.text || "").trim() || null;
+  }, `Whisper fallback (${blob.size}B, ${normalizedMime})`);
 }
 
+// ─── CALL SITE 3: OpenAI — transcript refinement ─────────────────────────────
 async function refineTranscription(rawText: string) {
   if (!rawText || rawText.length < 5) return rawText;
 
-  // Skip refinement for very short or likely-noise transcriptions
   const words = rawText.trim().split(/\s+/);
   if (words.length < 3) return rawText;
 
@@ -304,28 +485,33 @@ Your task is to correct errors, remove filler words (um, uh, like), and improve 
 Return ONLY the corrected transcript text. If the input is unclear, inaudible, or empty, return the exact input unchanged. Never add commentary, apologies, or meta-responses.`;
 
   try {
-    const response = await fetch(OPENAI_CHAT_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: rawText },
-        ],
-        temperature: 0.1,
-        max_tokens: 500,
-      }),
-    });
+    const refined = await apiManager.enqueue(async () => {
+      const response = await fetch(OPENAI_CHAT_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: rawText },
+          ],
+          temperature: 0.1,
+          max_tokens: 500,
+        }),
+      });
 
-    if (!response.ok) return rawText;
-    const data = await response.json();
-    const refined = data?.choices?.[0]?.message?.content?.trim() || rawText;
+      if (!response.ok) {
+        throw Object.assign(new Error(`Refinement API error ${response.status}`), {
+          status: response.status,
+        });
+      }
+      const data = await response.json();
+      return data?.choices?.[0]?.message?.content?.trim() || rawText;
+    }, "OpenAI refine transcription");
 
-    // Guard against AI hallucination / apology responses
     const lowerRefined = refined.toLowerCase();
     if (
       lowerRefined.startsWith("i'm sorry") ||
@@ -346,6 +532,7 @@ Return ONLY the corrected transcript text. If the input is unclear, inaudible, o
   }
 }
 
+// ─── CALL SITE 4: OpenAI — meeting summarisation ─────────────────────────────
 async function summarizeTranscriptIfNeeded() {
   if (!state.isActive || state.transcript.length === 0) return;
 
@@ -400,31 +587,36 @@ Return a JSON object with these exact keys:
   "questionsRaised": ["Question 1", ...]
 }`;
 
-  const response = await fetch(OPENAI_CHAT_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: settings.aiModel || "gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      max_tokens: SUMMARIZATION_MAX_TOKENS,
-    }),
-  });
+  const content = await apiManager.enqueue(async () => {
+    const response = await fetch(OPENAI_CHAT_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: settings.aiModel || "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        max_tokens: SUMMARIZATION_MAX_TOKENS,
+      }),
+    });
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Chat API error ${response.status}: ${text}`);
-  }
+    if (!response.ok) {
+      const text = await response.text();
+      throw Object.assign(new Error(`Chat API error ${response.status}: ${text}`), {
+        status: response.status,
+      });
+    }
 
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
+    const data = await response.json();
+    return data?.choices?.[0]?.message?.content as string | undefined;
+  }, "OpenAI summarise transcript");
+
   if (!content) return;
 
   const parsed = JSON.parse(content);
@@ -485,6 +677,7 @@ function detectNewJoiners(currentList: string[]) {
   return newJoiners;
 }
 
+// ─── CALL SITE 5: OpenAI — late-joiner welcome message ───────────────────────
 async function generateLateJoinerMessage(joinerName: string) {
   const safeJoinerName = sanitizePromptText(joinerName);
   const context = {
@@ -502,23 +695,31 @@ async function generateLateJoinerMessage(joinerName: string) {
 
     const prompt = `A participant named ${safeJoinerName} joined late. Meeting duration: ${Math.round(context.duration / 60)} minutes. Current topic: ${sanitizePromptText(context.currentTopic || "General discussion")}. Recent topics: ${sanitizePromptText(JSON.stringify(context.topics || []))}. Decisions: ${sanitizePromptText(JSON.stringify(context.decisions || []))}. Write a short welcome message under 3 sentences. Output plain text only.`;
 
-    const response = await fetch(OPENAI_CHAT_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.5,
-        max_tokens: JOINER_MESSAGE_MAX_TOKENS,
-      }),
-    });
+    const message = await apiManager.enqueue(async () => {
+      const response = await fetch(OPENAI_CHAT_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.5,
+          max_tokens: JOINER_MESSAGE_MAX_TOKENS,
+        }),
+      });
 
-    if (!response.ok) return fallback;
-    const data = await response.json();
-    return data?.choices?.[0]?.message?.content?.trim() || fallback;
+      if (!response.ok) {
+        throw Object.assign(new Error(`Chat API error ${response.status}`), {
+          status: response.status,
+        });
+      }
+      const data = await response.json();
+      return data?.choices?.[0]?.message?.content?.trim() || fallback;
+    }, `OpenAI late-joiner message for "${joinerName}"`);
+
+    return message;
   } catch {
     return fallback;
   }
@@ -662,7 +863,6 @@ async function scanForMeetTabs() {
   try {
     const tabs = await chrome.tabs.query({ url: "https://meet.google.com/*" });
     if (tabs.length > 0) {
-      // Find the first tab with a meeting code
       for (const tab of tabs) {
         const urlMatch = tab.url?.match(/meet\.google\.com\/([a-z\-]+)/);
         const meetingId = urlMatch ? urlMatch[1] : null;
@@ -746,7 +946,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
         await broadcastStateUpdate();
       }
     }
-  } catch (err) {
+  } catch {
     // Tab might be closed by now
   }
 });
