@@ -147,11 +147,20 @@ interface Settings {
   summarizationInterval?: number;
   aiModel?: string;
   vadThreshold?: number;
+  lateJoinerBriefing?: boolean;
+  topicDetection?: boolean;
+  decisionDetection?: boolean;
+  actionExtraction?: boolean;
+  sentimentAnalysis?: boolean;
 }
 
 async function getSettings(): Promise<Settings> {
   const result = await chrome.storage.local.get("settings");
   return result.settings || {};
+}
+
+function isFeatureEnabled(settings: Settings, key: keyof Settings): boolean {
+  return settings[key] !== false;
 }
 
 function sanitizePromptText(value: string | null) {
@@ -375,14 +384,35 @@ async function summarizeTranscriptIfNeeded() {
     .join("\n");
   if (!transcriptWindow.trim()) return;
 
+  const topicDetectionEnabled = isFeatureEnabled(settings, "topicDetection");
+  const decisionDetectionEnabled = isFeatureEnabled(settings, "decisionDetection");
+  const actionExtractionEnabled = isFeatureEnabled(settings, "actionExtraction");
+  const sentimentAnalysisEnabled = isFeatureEnabled(settings, "sentimentAnalysis");
+  const outputFields = [
+    '"summary": "Updated meeting summary..."',
+    ...(topicDetectionEnabled
+      ? [
+          '"topics": [{"name": "Topic", "status": "active|completed"}]',
+          '"currentTopic": "Identifying the current main topic"',
+        ]
+      : []),
+    ...(decisionDetectionEnabled ? ['"decisions": ["Decision 1", ...]'] : []),
+    ...(actionExtractionEnabled ? ['"actionItems": ["Action 1", ...]'] : []),
+    ...(sentimentAnalysisEnabled ? ['"sentiment": "positive|neutral|negative|mixed"'] : []),
+    '"keyInsights": ["Insight 1", ...]',
+    '"questionsRaised": ["Question 1", ...]',
+  ];
+
   const systemPrompt = `You are a World-Class Meeting Intelligence Engine. 
 Your goal is to extract high-fidelity insights from meeting transcripts.
 
 OUTPUT GUIDELINES:
 - Provide a concise yet professional summary (business grade).
-- Identify distinct topics and their statuses (active/completed).
-- Precisely capture decisions and action items (with assignees if mentioned).
-- Detect the prevailing sentiment and emotional dynamics.
+- Extract only the fields requested by the user prompt.
+${topicDetectionEnabled ? "- Identify distinct topics and their statuses (active/completed)." : ""}
+${decisionDetectionEnabled ? "- Precisely capture decisions if mentioned." : ""}
+${actionExtractionEnabled ? "- Precisely capture action items with assignees if mentioned." : ""}
+${sentimentAnalysisEnabled ? "- Detect the prevailing sentiment and emotional dynamics." : ""}
 - Extract "Key Insights" that go beyond a simple summary (strategic value).
 - Track specific questions raised that remain unanswered.
 
@@ -399,14 +429,7 @@ ${transcriptWindow}
 
 Return a JSON object with these exact keys:
 {
-  "summary": "Updated meeting summary...",
-  "topics": [{"name": "Topic", "status": "active|completed"}],
-  "decisions": ["Decision 1", ...],
-  "actionItems": ["Action 1", ...],
-  "currentTopic": "Identifying the current main topic",
-  "sentiment": "positive|neutral|negative|mixed",
-  "keyInsights": ["Insight 1", ...],
-  "questionsRaised": ["Question 1", ...]
+  ${outputFields.join(",\n  ")}
 }`;
 
   const response = await fetch(OPENAI_CHAT_URL, {
@@ -438,11 +461,19 @@ Return a JSON object with these exact keys:
 
   const parsed = JSON.parse(content);
   state.summary = parsed.summary || state.summary;
-  state.topics = Array.isArray(parsed.topics) ? parsed.topics : state.topics;
-  state.decisions = Array.isArray(parsed.decisions) ? parsed.decisions : state.decisions;
-  state.actionItems = Array.isArray(parsed.actionItems) ? parsed.actionItems : state.actionItems;
-  state.currentTopic = parsed.currentTopic || state.currentTopic;
-  state.sentiment = parsed.sentiment || state.sentiment;
+  if (topicDetectionEnabled) {
+    state.topics = Array.isArray(parsed.topics) ? parsed.topics : state.topics;
+    state.currentTopic = parsed.currentTopic || state.currentTopic;
+  }
+  if (decisionDetectionEnabled) {
+    state.decisions = Array.isArray(parsed.decisions) ? parsed.decisions : state.decisions;
+  }
+  if (actionExtractionEnabled) {
+    state.actionItems = Array.isArray(parsed.actionItems) ? parsed.actionItems : state.actionItems;
+  }
+  if (sentimentAnalysisEnabled) {
+    state.sentiment = parsed.sentiment || state.sentiment;
+  }
   state.keyInsights = Array.isArray(parsed.keyInsights) ? parsed.keyInsights : state.keyInsights;
   state.questionsRaised = Array.isArray(parsed.questionsRaised)
     ? parsed.questionsRaised
@@ -546,6 +577,9 @@ async function sendChatToTab(tabId: number, text: string) {
 
 async function maybeWelcomeJoiners(tabId: number | undefined, joiners: string[]) {
   if (!joiners.length || getDuration() <= MIN_MEETING_DURATION_FOR_WELCOME || !tabId) return;
+
+  const settings = await getSettings();
+  if (!isFeatureEnabled(settings, "lateJoinerBriefing")) return;
 
   const normalizedSelf = normalizeParticipantName(selfParticipantName);
 
