@@ -324,7 +324,7 @@ initTheme();
     }
 
     if (message?.type === "STATE_UPDATE") {
-      const btn = document.getElementById("late-meet-floating-btn");
+      const btn = document.getElementById("late-meet-floating-btn") as HTMLButtonElement | null;
       if (btn && message.state.isActive) {
         btn.style.display = "none";
       } else if (btn && !message.state.isActive) {
