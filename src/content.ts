@@ -357,9 +357,24 @@ initTheme();
   function startActiveSpeakerDetection() {
     if (activeSpeakerObserver) return;
 
+    function isSpeakerRelatedNode(node: Node): boolean {
+      if (!(node instanceof Element)) return false;
+      return (
+        Boolean(closestParticipantTile(node)) ||
+        node.matches(SELECTORS.activeSpeakerIndicators.join(",")) ||
+        Boolean(node.querySelector(SELECTORS.activeSpeakerIndicators.join(",")))
+      );
+    }
+
     activeSpeakerObserver = new MutationObserver((mutations) => {
       const sawSpeakerRelatedChange = mutations.some((mutation) => {
-        if (mutation.type === "childList") return true;
+        if (mutation.type === "childList") {
+          return (
+            isSpeakerRelatedNode(mutation.target) ||
+            Array.from(mutation.addedNodes).some(isSpeakerRelatedNode) ||
+            Array.from(mutation.removedNodes).some(isSpeakerRelatedNode)
+          );
+        }
         if (mutation.type !== "attributes") return false;
 
         const name = mutation.attributeName || "";
