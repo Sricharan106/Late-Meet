@@ -1,4 +1,5 @@
 import { getApiCredentials, saveApiCredentials } from "./utils/credentials";
+import { validateOpenAIKey, validateElevenLabsKey } from "./utils/api.js";
 
 interface Settings {
   summarizationInterval?: number;
@@ -149,10 +150,37 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ——— Save ———
   document.getElementById("save-btn")?.addEventListener("click", async () => {
+    const saveBtn = document.getElementById("save-btn") as HTMLButtonElement;
+    const status = document.getElementById("save-status");
+
     const openaiKey = (document.getElementById("openai-key") as HTMLInputElement)?.value.trim();
     const elevenlabsKey = (
       document.getElementById("elevenlabs-key") as HTMLInputElement
     )?.value.trim();
+
+    const originalText = saveBtn.textContent || "Save Settings";
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Validating Keys...";
+
+    const [isOpenAIValid, isElevenLabsValid] = await Promise.all([
+      openaiKey ? validateOpenAIKey(openaiKey) : Promise.resolve(true),
+      elevenlabsKey ? validateElevenLabsKey(elevenlabsKey) : Promise.resolve(true),
+    ]);
+
+    if (!isOpenAIValid || !isElevenLabsValid) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = originalText;
+
+      if (status) {
+        status.style.color = "red";
+        status.textContent = !isOpenAIValid
+          ? "Invalid OpenAI API Key. Please verify and try again."
+          : "Invalid ElevenLabs API Key. Please verify and try again.";
+        status.classList.add("visible");
+        setTimeout(() => status.classList.remove("visible"), 4000);
+      }
+      return;
+    }
 
     const parsedInterval = intervalSlider ? parseInt(intervalSlider.value, 10) : 30;
     const validatedInterval =
@@ -192,10 +220,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       saveApiCredentials({ openai_api_key: openaiKey, elevenlabs_api_key: elevenlabsKey }),
     ]);
 
+    saveBtn.disabled = false;
+    saveBtn.textContent = originalText;
+
     // Show success
-    const status = document.getElementById("save-status");
     if (status) {
-      status.textContent = "✓ Settings saved successfully!";
+      status.style.color = "";
+      status.textContent = "Settings saved successfully!";
       status.classList.add("visible");
 
       setTimeout(() => {

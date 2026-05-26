@@ -6,6 +6,9 @@ import { getOpenAiApiKey } from "./credentials";
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions";
 
+const OPENAI_MODELS_URL = "https://api.openai.com/v1/models";
+const ELEVENLABS_USER_URL = "https://api.elevenlabs.io/v1/user";
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface WhisperSegment {
@@ -153,4 +156,51 @@ export async function elevenlabsTranscribe(
     segments: [],
     duration: 0,
   };
+}
+
+/**
+ * Validate OpenAI API Key with a zero-cost GET request.
+ */
+
+export async function validateOpenAIKey(apiKey: string): Promise<boolean> {
+  if (!apiKey) return false;
+  try {
+    const response = await fetch(OPENAI_MODELS_URL, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
+    return response.ok;
+  } catch (error) {
+    console.error("OpenAI validation error:", error);
+    return false;
+  }
+}
+
+/**
+ * Validate ElevenLabs API Key with a zero-cost GET request.
+ */
+
+export async function validateElevenLabsKey(apiKey: string): Promise<boolean> {
+  if (!apiKey) return false;
+  try {
+    const response = await fetch(ELEVENLABS_USER_URL, {
+      method: "GET",
+      headers: {
+        "xi-api-key": apiKey,
+      },
+    });
+    if (response.ok) {
+      return true;
+    }
+    if (response.status === 401) {
+      const data = await response.json();
+      return data?.detail?.status === "missing_permissions";
+    }
+    return false;
+  } catch (error) {
+    console.error("ElevenLabs validation error:", error);
+    return false;
+  }
 }
