@@ -1,7 +1,4 @@
 // MV3 service worker for Late Meet
-import { initTheme } from "./theme.js";
-
-initTheme();
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions";
@@ -18,6 +15,7 @@ const MIN_MEETING_DURATION_FOR_WELCOME = 10;
 import { ActionItem, Decision, State } from "./types";
 import { audioFileExtensionForMimeType, isChunkViable } from "./audioProcessing";
 import { getElevenLabsApiKey, getOpenAiApiKey } from "./utils/credentials";
+import { resolveDetectedMeetTab } from "./meetingTabs";
 
 const state: State = {
   isActive: false,
@@ -46,6 +44,7 @@ const state: State = {
 };
 
 let selfParticipantName: string | null = null;
+const notifiedActionItems = new Set<string>();
 let activeSpeakerName: string | null = null;
 let activeSpeakerUpdatedAt = 0;
 const ACTIVE_SPEAKER_TTL_MS = 15000;
@@ -81,6 +80,7 @@ function resetState() {
   state.pendingJoiners.clear();
   state.participantCount = 0;
   selfParticipantName = null;
+  notifiedActionItems.clear();
   activeSpeakerName = null;
   activeSpeakerUpdatedAt = 0;
 }
@@ -548,6 +548,10 @@ Return a JSON object with these exact keys:
     state.decisions = [];
   }
   if (actionExtractionEnabled) {
+    if (Array.isArray(parsed.actionItems)) {
+      state.actionItems = parsed.actionItems;
+      notifyNewActionItems(state.actionItems);
+    }
     state.actionItems = normalizeActionItems(parsed.actionItems, state.actionItems);
   } else {
     state.actionItems = [];
@@ -562,6 +566,39 @@ Return a JSON object with these exact keys:
     ? parsed.questionsRaised
     : state.questionsRaised;
   state.lastSummarizedAt = Date.now();
+}
+
+function actionItemKey(item: ActionItem | unknown): string {
+  if (item && typeof item === "object" && "task" in (item as object)) {
+    const task = (item as { task?: unknown }).task;
+    return String(task ?? "").trim();
+  }
+  return String(item ?? "").trim();
+}
+
+function notifyNewActionItems(items: ActionItem[]) {
+  if (!chrome.notifications) return;
+  for (const item of items) {
+    const key = actionItemKey(item);
+    if (!key || notifiedActionItems.has(key)) continue;
+    const message = key.length > 100 ? key.slice(0, 97) + "..." : key;
+    const notifId = `lm-action-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    chrome.notifications.create(
+      notifId,
+      {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("src/icons/icon128.png"),
+        title: "New Action Item",
+        message,
+        priority: 1,
+      },
+      () => {
+        if (!chrome.runtime.lastError) {
+          notifiedActionItems.add(key);
+        }
+      },
+    );
+  }
 }
 
 function detectNewJoiners(currentList: string[]) {
@@ -797,27 +834,17 @@ async function startAudioCapture(
 
 async function scanForMeetTabs() {
   try {
-    const tabs = await chrome.tabs.query({ url: "https://meet.google.com/*" });
-    if (tabs.length > 0) {
-      // Find the first tab with a meeting code
-      for (const tab of tabs) {
-        const urlMatch = tab.url?.match(/meet\.google\.com\/([a-z\-]+)/);
-        const meetingId = urlMatch ? urlMatch[1] : null;
-        if (meetingId && meetingId !== "new") {
-          if (!state.isActive) {
-            resetState();
-            state.isActive = true;
-            state.meetingId = meetingId;
-            state.meetingUrl = tab.url || null;
-            state.targetTabId = tab.id || null;
-            state.startTime = Date.now();
-            state.participants = ["You"];
-            console.log("[LateMeet] Proactively detected meeting:", meetingId);
-            await broadcastStateUpdate();
-          }
-          return;
-        }
-      }
+    const meetTab = await resolveDetectedMeetTab();
+    if (meetTab && !state.isActive) {
+      resetState();
+      state.isActive = true;
+      state.meetingId = meetTab.meetingId;
+      state.meetingUrl = meetTab.meetingUrl;
+      state.targetTabId = meetTab.tab.id || null;
+      state.startTime = Date.now();
+      state.participants = ["You"];
+      console.log("[LateMeet] Proactively detected meeting:", meetTab.meetingId);
+      await broadcastStateUpdate();
     }
   } catch (err) {
     console.error("[LateMeet] Scan for meet tabs failed:", err);
@@ -838,6 +865,9 @@ async function stopAudioCapture(reason = "Stopped") {
 
   state.audioActive = false;
   state.isActive = false;
+  state.meetingId = null;
+  state.meetingUrl = null;
+  state.targetTabId = null;
 
   await broadcastStateUpdate();
 
@@ -850,17 +880,58 @@ async function stopAudioCapture(reason = "Stopped") {
   await closeOffscreenDocumentIfPresent();
 }
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === "complete" && tab.url?.includes("meet.google.com/")) {
-    const urlMatch = tab.url.match(/meet\.google\.com\/([a-z\-]+)/);
-    const meetingId = urlMatch ? urlMatch[1] : null;
+function parseMeetUrl(value: string | undefined | null): URL | null {
+  try {
+    const parsed = new URL(String(value || ""));
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    if (parsed.hostname !== "meet.google.com") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
-    if (meetingId && meetingId !== "new") {
+function extractMeetCode(url: string | undefined | null): string | null {
+  const parsed = parseMeetUrl(url);
+  if (!parsed) return null;
+  const match = parsed.pathname.match(/^\/([a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3})(?:\/|$)/i);
+  return match ? match[1] : null;
+}
+
+function isMeetCode(value: string | null | undefined): boolean {
+  return /^[a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3}$/i.test(String(value || ""));
+}
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  const nextUrl = changeInfo.url || tab.url;
+
+  // If we are actively capturing from this tab, stop capture as soon as the tab
+  // navigates away from a Meet meeting scope (privacy safety default).
+  if (state.audioActive && state.targetTabId && tabId === state.targetTabId) {
+    const isMeetUrl = Boolean(parseMeetUrl(nextUrl));
+    const meetCode = extractMeetCode(nextUrl);
+    if (!isMeetUrl) {
+      await stopAudioCapture("Navigated away from Meet");
+      return;
+    }
+    if (!meetCode) {
+      await stopAudioCapture("Left meeting");
+      return;
+    }
+    if (isMeetCode(state.meetingId) && meetCode !== state.meetingId) {
+      await stopAudioCapture("Switched meeting");
+      return;
+    }
+  }
+
+  if (changeInfo.status === "complete") {
+    const meetingId = extractMeetCode(nextUrl);
+    if (meetingId) {
       if (!state.isActive) {
         resetState();
         state.isActive = true;
         state.meetingId = meetingId;
-        state.meetingUrl = tab.url || null;
+        state.meetingUrl = nextUrl || null;
         state.targetTabId = tabId || null;
         state.startTime = Date.now();
         state.participants = ["You"];
@@ -873,19 +944,16 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   try {
     const tab = await chrome.tabs.get(activeInfo.tabId);
-    if (tab.url?.includes("meet.google.com/")) {
-      const urlMatch = tab.url.match(/meet\.google\.com\/([a-z\-]+)/);
-      const meetingId = urlMatch ? urlMatch[1] : null;
-      if (meetingId && meetingId !== "new" && !state.isActive) {
-        state.meetingId = meetingId;
-        state.meetingUrl = tab.url;
-        state.targetTabId = activeInfo.tabId;
-        await broadcastStateUpdate();
-      }
+    const meetingId = extractMeetCode(tab.url);
+    if (meetingId && !state.isActive) {
+      state.meetingId = meetingId;
+      state.meetingUrl = tab.url || null;
+      state.targetTabId = activeInfo.tabId;
+      await broadcastStateUpdate();
     }
   } catch (err) {
     // Tab might be closed by now
-    console.log(err); // since lint is giving error
+    console.debug("[LateMeet] tab activation handler failed:", err);
   }
 });
 
@@ -941,6 +1009,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           message.streamId,
           message.includeMicrophone !== false,
         );
+        sendResponse({ success: true });
+        return;
+      }
+
+      case "MANUAL_STOP_AUDIO": {
+        if (state.audioActive || state.isActive) {
+          await stopAudioCapture("Stopped by user");
+        }
+        sendResponse({ success: true });
+        return;
+      }
+
+      case "MEETING_ENDED":
+      case "CALL_ENDED": {
+        if (state.audioActive || state.isActive) {
+          await stopAudioCapture("Call ended");
+        }
         sendResponse({ success: true });
         return;
       }
