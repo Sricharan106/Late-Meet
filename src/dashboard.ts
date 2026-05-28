@@ -122,15 +122,79 @@ document.addEventListener("DOMContentLoaded", async () => {
   // ——— Tab Switching ———
   const tabs = document.querySelectorAll(".dash-tab");
   const panels = document.querySelectorAll(".tab-panel");
+  const loadedTabs = new Set<string>(["overview"]);
+
+  function showSkeletonForTab(tabId: string) {
+    const containerMap: Record<string, string> = {
+      topics: "dash-topics-full",
+      decisions: "dash-decisions-list",
+      actions: "dash-actions-list",
+      people: "dash-participants-list",
+      timeline: "dash-timeline",
+      transcript: "dash-transcript-list",
+      sessions: "dash-sessions-list",
+    };
+    const containerId = containerMap[tabId];
+    if (!containerId) return;
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (tabId === "people" || tabId === "transcript" || tabId === "timeline") {
+      container.innerHTML = Array(4)
+        .fill(0)
+        .map(
+          () => `
+        <div class="skeleton-row">
+          <div class="skeleton-avatar"></div>
+          <div class="skeleton-text-block">
+            <div class="skeleton-text"></div>
+            <div class="skeleton-text short"></div>
+          </div>
+        </div>
+      `,
+        )
+        .join("");
+    } else {
+      container.innerHTML = Array(4)
+        .fill(0)
+        .map(
+          () => `
+        <div class="skeleton-item"></div>
+      `,
+        )
+        .join("");
+    }
+  }
 
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
+      const tabId = (tab as HTMLElement).dataset.tab;
+      if (!tabId) return;
+
       tabs.forEach((t) => t.classList.remove("active"));
       panels.forEach((p) => p.classList.remove("active"));
       (tab as HTMLElement).classList.add("active");
-      const tabId = (tab as HTMLElement).dataset.tab;
-      if (tabId) {
-        document.getElementById(`tab-${tabId}`)?.classList.add("active");
+
+      const panel = document.getElementById(`tab-${tabId}`);
+      if (panel) {
+        panel.classList.add("active");
+      }
+
+      if (!loadedTabs.has(tabId)) {
+        loadedTabs.add(tabId);
+        showSkeletonForTab(tabId);
+        setTimeout(() => {
+          if (lastState) {
+            if (tabId === "topics") updateTopics(lastState.topics);
+            else if (tabId === "decisions") updateDecisions(lastState.decisions);
+            else if (tabId === "actions") updateActions(lastState.actionItems);
+            else if (tabId === "people")
+              updatePeople(lastState.participants, lastState.lateJoiners);
+            else if (tabId === "timeline") updateTimeline(lastState.timeline);
+            else if (tabId === "transcript") updateTranscript(lastState.transcript);
+          }
+          if (tabId === "sessions") loadSavedSessions();
+        }, 150);
       }
     });
   });
@@ -165,6 +229,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       const sessionsTab = document.querySelector('[data-tab="sessions"]');
       if (sessionsTab?.classList.contains("active")) {
         loadSavedSessions();
+      } else {
+        loadedTabs.delete("sessions");
       }
     }
     if (message.type === "WAVEFORM_DATA" && Array.isArray(message.buckets)) {
@@ -351,22 +417,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     updateInsights(state.keyInsights);
 
     // Topics Tab
-    updateTopics(state.topics);
+    if (loadedTabs.has("topics")) updateTopics(state.topics);
 
     // Decisions Tab
-    updateDecisions(state.decisions);
+    if (loadedTabs.has("decisions")) updateDecisions(state.decisions);
 
     // Actions Tab
-    updateActions(state.actionItems);
+    if (loadedTabs.has("actions")) updateActions(state.actionItems);
 
     // People Tab
-    updatePeople(state.participants, state.lateJoiners);
+    if (loadedTabs.has("people")) updatePeople(state.participants, state.lateJoiners);
 
     // Timeline Tab
-    updateTimeline(state.timeline);
+    if (loadedTabs.has("timeline")) updateTimeline(state.timeline);
 
     // Transcript Tab
-    updateTranscript(state.transcript);
+    if (loadedTabs.has("transcript")) updateTranscript(state.transcript);
   }
 
   // ——— Sentiment ———
@@ -997,6 +1063,5 @@ document.addEventListener("DOMContentLoaded", async () => {
     showToast("Downloaded as .md file", "success");
   }
 
-  // Load sessions on tab switch
-  document.querySelector('[data-tab="sessions"]')?.addEventListener("click", loadSavedSessions);
+  // Session loading is handled in the tab click listener now
 });
