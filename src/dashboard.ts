@@ -402,18 +402,20 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
     list.innerHTML = insights
+      .filter((i) => i != null)
       .map((i) => {
         const text = typeof i === "string" ? i : i.text || "";
         const rawScore =
-          typeof i === "object" && i !== null ? (i as { confidenceScore?: unknown }).confidenceScore : undefined;
-        const parsedScore =
-          typeof rawScore === "number" ? rawScore : Number(rawScore);
+          typeof i === "object" && i !== null
+            ? (i as { confidenceScore?: unknown }).confidenceScore
+            : undefined;
+        const parsedScore = typeof rawScore === "number" ? rawScore : Number(rawScore);
         const safeScore = Number.isFinite(parsedScore)
           ? Math.max(0, Math.min(100, parsedScore))
           : null;
         const score =
           safeScore !== null
-            ? ` <span style="font-size: 11px; color: `#9ca3af`;">(Conf: ${safeScore}%)</span>`
+            ? ` <span style="font-size: 11px; color: #9ca3af;">(Conf: ${safeScore}%)</span>`
             : "";
         return `<li>${escapeHtml(text)}${score}</li>`;
       })
@@ -438,6 +440,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
     list.innerHTML = contradictions
+      .filter((c) => c != null)
       .map((c) => {
         const issue = typeof c === "string" ? c : c.issue || "";
         const persists =
@@ -894,7 +897,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function sanitizeTopicStatus(status: string) {
-    return status === "completed" ? "completed" : "active";
+    if (status === "completed") return "completed";
+    if (status === "unresolved") return "unresolved";
+    return "active";
   }
 
   function formatDuration(seconds: number) {
