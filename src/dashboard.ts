@@ -120,7 +120,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initWaveformCanvas();
 
   // ——— Tab Switching ———
-  const tabs = document.querySelectorAll(".dash-tab");
+  const tabs = document.querySelectorAll(".dash-tabs .dash-tab");
   const panels = document.querySelectorAll(".tab-panel");
   const loadedTabs = new Set<string>(["overview"]);
 
@@ -174,10 +174,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       tabs.forEach((t) => {
         t.classList.remove("active");
         t.setAttribute("aria-selected", "false");
+        t.setAttribute("tabindex", "-1");
       });
       panels.forEach((p) => p.classList.remove("active"));
       (tab as HTMLElement).classList.add("active");
       (tab as HTMLElement).setAttribute("aria-selected", "true");
+      (tab as HTMLElement).setAttribute("tabindex", "0");
 
       const panel = document.getElementById(`tab-${tabId}`);
       if (panel) {
@@ -195,8 +197,32 @@ document.addEventListener("DOMContentLoaded", async () => {
             updatePeople(lastState?.participants || [], lastState?.lateJoiners || []);
           else if (tabId === "timeline") updateTimeline(lastState?.timeline || []);
           else if (tabId === "transcript") updateTranscript(lastState?.transcript || []);
-          else if (tabId === "sessions") loadMeetingHistory();
+          else if (tabId === "history" || tabId === "sessions") loadMeetingHistory();
         }, 150);
+      }
+    });
+
+    tab.addEventListener("keydown", (e: Event) => {
+      const kbEvent = e as KeyboardEvent;
+      let newIndex = -1;
+      const tabsArray = Array.from(tabs);
+      const index = tabsArray.indexOf(tab);
+
+      if (kbEvent.key === "ArrowRight") {
+        newIndex = (index + 1) % tabsArray.length;
+      } else if (kbEvent.key === "ArrowLeft") {
+        newIndex = (index - 1 + tabsArray.length) % tabsArray.length;
+      } else if (kbEvent.key === "Home") {
+        newIndex = 0;
+      } else if (kbEvent.key === "End") {
+        newIndex = tabsArray.length - 1;
+      }
+
+      if (newIndex !== -1) {
+        kbEvent.preventDefault();
+        const newTab = tabsArray[newIndex] as HTMLElement;
+        newTab.focus();
+        newTab.click();
       }
     });
   });
