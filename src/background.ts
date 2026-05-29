@@ -1092,7 +1092,7 @@ async function stopAudioCapture(reason = "Stopped") {
     // Ignore if offscreen not running
   }
 
-  if (state.isActive) {
+  if (state.audioActive) {
     addTimeline(`Meeting ended (${reason})`);
     await savePendingSession();
   }
@@ -1322,6 +1322,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   });
 
   return true;
+});
+
+// Keyboard Shortcut Commands
+chrome.commands.onCommand.addListener(async (command) => {
+  try {
+    if (command === "toggle-recording") {
+      if (state.audioActive) {
+        await stopAudioCapture("Keyboard shortcut stop");
+        return;
+      }
+
+      await scanForMeetTabs();
+      if (state.targetTabId) {
+        await startAudioCapture(state.targetTabId, state.meetingId, state.meetingUrl);
+      } else {
+        console.warn("[LateMeet] No active Meet tab found for keyboard shortcut.");
+      }
+      return;
+    }
+
+    if (command === "open-side-panel") {
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (activeTab?.id) {
+        await chrome.sidePanel.open({ tabId: activeTab.id });
+      }
+    }
+  } catch (err) {
+    console.error("[LateMeet] Keyboard command failed:", command, err);
+  }
 });
 
 // Proactive scan on startup/load

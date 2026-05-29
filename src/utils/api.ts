@@ -1,6 +1,7 @@
 // OpenAI and ElevenLabs API wrappers for Meeting Copilot
 
 // @ts-ignore: Could not find a declaration file for module '@elevenlabs/elevenlabs-js'
+// @ts-ignore
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 import { getOpenAiApiKey } from "./credentials";
 
