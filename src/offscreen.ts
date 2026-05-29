@@ -1,7 +1,4 @@
 import { VoiceActivityTracker, isChunkViable } from "./audioProcessing";
-import { initTheme } from "./theme.js";
-
-initTheme();
 
 let mediaStream: MediaStream | null = null;
 let microphoneStream: MediaStream | null = null;
@@ -336,6 +333,13 @@ async function startCapture(
         await stopCapture();
       } catch (err) {
         console.error("[LateMeet][offscreen] Cleanup after track end failed:", err);
+      } finally {
+        await chrome.runtime
+          .sendMessage({
+            type: "UNEXPECTED_TRACK_END",
+            reason: "Track ended unexpectedly (tab closed or mic disconnected)",
+          })
+          .catch(() => {});
       }
     };
   });

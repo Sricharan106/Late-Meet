@@ -13,6 +13,7 @@ import {
   StoredSession,
 } from "./sessionStorage";
 import { AudioChunkQueue, AudioChunkQueueItem } from "./audioChunkQueue";
+import { normalizeActiveSpeakerName, resolveTranscriptSpeaker } from "./speakerAttribution";
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions";
@@ -210,6 +211,8 @@ const state: State = {
   currentTopic: "",
   sentiment: "neutral",
   keyInsights: [],
+  unresolvedDiscussions: [],
+  contradictions: [],
   questionsRaised: [],
   participants: [],
   initialParticipants: [],
@@ -217,13 +220,23 @@ const state: State = {
   timeline: [],
   transcript: [],
   audioActive: false,
+  currentSpeaker: null,
   targetTabId: null,
   lastSummarizedAt: 0,
-  pendingJoiners: new Set(),
   participantCount: 0,
 };
 
 let selfParticipantName: string | null = null;
+
+// ---------------------------------------------------------------------------
+// Transient Late-Joiner Processing State
+// ---------------------------------------------------------------------------
+// Tracks which late joiners are currently being processed for welcome messages.
+// This is NOT persisted or shared with UI — it's purely for preventing duplicate
+// welcome message sends during the maybeWelcomeJoiners() workflow.
+// Entries are added when processing begins and removed when it completes (see finally block).
+// This state is discarded on service worker suspension and not restored.
+const pendingJoinersInFlight = new Set<string>();
 
 function normalizeParticipantName(value: string | null | undefined): string {
   return String(value || "")
@@ -243,6 +256,8 @@ function resetState() {
   state.currentTopic = "";
   state.sentiment = "neutral";
   state.keyInsights = [];
+  state.unresolvedDiscussions = [];
+  state.contradictions = [];
   state.questionsRaised = [];
   state.participants = [];
   state.initialParticipants = [];
@@ -250,9 +265,10 @@ function resetState() {
   state.timeline = [];
   state.transcript = [];
   state.audioActive = false;
+  state.currentSpeaker = null;
   state.targetTabId = null;
   state.lastSummarizedAt = 0;
-  state.pendingJoiners.clear();
+  pendingJoinersInFlight.clear();
   audioChunkQueue.clear();
   state.participantCount = 0;
   selfParticipantName = null;
@@ -285,6 +301,8 @@ function snapshot() {
     currentTopic: state.currentTopic,
     sentiment: state.sentiment,
     keyInsights: state.keyInsights,
+    unresolvedDiscussions: state.unresolvedDiscussions,
+    contradictions: state.contradictions,
     questionsRaised: state.questionsRaised,
     participants: state.participants,
     initialParticipants: state.initialParticipants,
@@ -292,6 +310,7 @@ function snapshot() {
     timeline: state.timeline,
     transcript: state.transcript,
     audioActive: state.audioActive,
+    currentSpeaker: state.currentSpeaker,
     participantCount: state.participantCount,
   };
 }
@@ -600,28 +619,37 @@ async function summarizeTranscriptIfNeeded() {
       '"summary": "Updated meeting summary..."',
       ...(topicDetectionEnabled
         ? [
-            '"topics": [{"name": "Topic", "status": "active|completed"}]',
+            '"topics": [{"name": "Topic", "status": "active|completed|unresolved"}]',
             '"currentTopic": "Identifying the current main topic"',
+            '"unresolvedDiscussions": ["unresolved topic 1", ...]',
           ]
         : []),
-      ...(decisionDetectionEnabled ? ['"decisions": ["Decision 1", ...]'] : []),
-      ...(actionExtractionEnabled ? ['"actionItems": ["Action 1", ...]'] : []),
+      ...(decisionDetectionEnabled
+        ? ['"decisions": [{"text": "Decision 1", "classification": "finalized|tentative"}]']
+        : []),
+      ...(actionExtractionEnabled
+        ? [
+            '"actionItems": [{"task": "Action 1", "confidence": "high|medium|low", "isSpeculative": false}]',
+          ]
+        : []),
       ...(sentimentAnalysisEnabled ? ['"sentiment": "positive|neutral|negative|mixed"'] : []),
-      '"keyInsights": ["Insight 1", ...]',
+      '"keyInsights": [{"text": "Insight 1", "confidenceScore": 85}, ...]',
+      '"contradictions": [{"issue": "Contradiction 1", "persists": true}]',
       '"questionsRaised": ["Question 1", ...]',
     ];
 
     const systemPrompt = `You are a World-Class Meeting Intelligence Engine. 
-Your goal is to extract high-fidelity insights from meeting transcripts.
+Your goal is to extract high-fidelity insights from meeting transcripts and apply Conversational Confidence Collapse Detection.
 
 OUTPUT GUIDELINES:
 - Provide a concise yet professional summary (business grade).
 - Extract only the fields requested by the user prompt.
-${topicDetectionEnabled ? "- Identify distinct topics and their statuses (active/completed)." : ""}
-${decisionDetectionEnabled ? "- Precisely capture decisions if mentioned." : ""}
-${actionExtractionEnabled ? "- Precisely capture action items with assignees if mentioned." : ""}
+${topicDetectionEnabled ? "- Identify distinct topics and their statuses (active/completed/unresolved)." : ""}
+${decisionDetectionEnabled ? "- Precisely capture decisions. Classify as 'tentative' if there are hedging phrases (maybe, probably), otherwise 'finalized'." : ""}
+${actionExtractionEnabled ? "- Precisely capture action items. Rate confidence (high/medium/low). Prevent speculative statements from appearing as confirmed by setting isSpeculative to true." : ""}
 ${sentimentAnalysisEnabled ? "- Detect the prevailing sentiment and emotional dynamics." : ""}
-- Extract "Key Insights" that go beyond a simple summary (strategic value).
+- Extract "Key Insights" with a confidenceScore (0-100) based on linguistic certainty.
+- Track contradiction persistence if someone disagrees or contradicts a previous point.
 - Track specific questions raised that remain unanswered.
 
 You must return ONLY a JSON object.`;
@@ -705,6 +733,12 @@ Return a JSON object with these exact keys:
     }
 
     state.keyInsights = Array.isArray(parsed.keyInsights) ? parsed.keyInsights : state.keyInsights;
+    state.unresolvedDiscussions = Array.isArray(parsed.unresolvedDiscussions)
+      ? parsed.unresolvedDiscussions
+      : state.unresolvedDiscussions;
+    state.contradictions = Array.isArray(parsed.contradictions)
+      ? parsed.contradictions
+      : state.contradictions;
     state.questionsRaised = Array.isArray(parsed.questionsRaised)
       ? parsed.questionsRaised
       : state.questionsRaised;
@@ -722,6 +756,7 @@ interface QueuedAudioChunk {
   mimeType: string;
   approxBytes: number;
   receivedAt: number;
+  speaker: string;
 }
 
 async function processQueuedAudioChunk({ id, item }: AudioChunkQueueItem<QueuedAudioChunk>) {
@@ -747,7 +782,7 @@ async function processQueuedAudioChunk({ id, item }: AudioChunkQueueItem<QueuedA
   console.log(`[LateMeet] transcript refined for chunk ${id} — ${refinedText.length} chars`);
 
   state.transcript.push({
-    speaker: "Audio",
+    speaker: resolveTranscriptSpeaker(item.speaker || state.currentSpeaker),
     text: refinedText,
     timestamp: item.receivedAt,
   });
@@ -867,32 +902,45 @@ async function sendChatToTab(tabId: number, text: string) {
 }
 
 async function maybeWelcomeJoiners(tabId: number | undefined, joiners: string[]) {
-  if (!joiners.length || getDuration() <= MIN_MEETING_DURATION_FOR_WELCOME || !tabId) return;
+  if (!joiners.length || getDuration() <= MIN_MEETING_DURATION_FOR_WELCOME || !tabId) {
+    return;
+  }
 
   const settings = await getSettings();
-  if (!isFeatureEnabled(settings, "lateJoinerBriefing")) return;
+  if (!isFeatureEnabled(settings, "lateJoinerBriefing")) {
+    return;
+  }
 
   const normalizedSelf = normalizeParticipantName(selfParticipantName);
 
   for (const joiner of joiners) {
     const name = String(joiner || "").trim();
     const normalizedName = normalizeParticipantName(name);
+
+    // Ignore invalid/self placeholder participants
     if (
       !name ||
       normalizedName === normalizeParticipantName("You") ||
-      (normalizedSelf && normalizedName === normalizedSelf) ||
-      state.pendingJoiners.has(name)
+      (normalizedSelf && normalizedName === normalizedSelf)
     ) {
       continue;
     }
 
-    state.pendingJoiners.add(name);
+    // Prevent duplicate welcome messages for case-only variants
+    // (e.g. "Alice" vs "alice")
+    if (pendingJoinersInFlight.has(normalizedName)) {
+      continue;
+    }
+
+    pendingJoinersInFlight.add(normalizedName);
+
     try {
       const text = await generateLateJoinerMessage(name);
       await sendChatToTab(tabId, text);
-      addTimeline(`Late joiner brief sent to ${name}`);
+    } catch (err) {
+      console.error("[LateMeet] Failed to welcome joiner:", err);
     } finally {
-      state.pendingJoiners.delete(name);
+      pendingJoinersInFlight.delete(normalizedName);
     }
   }
 }
@@ -1085,30 +1133,41 @@ async function scanForMeetTabs() {
   }
 }
 
+let isStoppingAudio = false;
+
 async function stopAudioCapture(reason = "Stopped") {
+  if (isStoppingAudio) {
+    console.log("[LateMeet] stop already in progress, skipping duplicate request.");
+    return;
+  }
+  isStoppingAudio = true;
   try {
-    await chrome.runtime.sendMessage({ type: "OFFSCREEN_STOP_CAPTURE" });
-  } catch {
-    // Ignore if offscreen not running
+    try {
+      await chrome.runtime.sendMessage({ type: "OFFSCREEN_STOP_CAPTURE" });
+    } catch {
+      // Ignore if offscreen not running
+    }
+
+    if (state.audioActive) {
+      addTimeline(`Meeting ended (${reason})`);
+      await savePendingSession();
+    }
+
+    state.audioActive = false;
+    state.isActive = false;
+
+    await broadcastStateUpdate();
+
+    try {
+      await chrome.runtime.sendMessage({ type: "SESSION_ENDED" });
+    } catch {
+      // no listeners
+    }
+
+    await closeOffscreenDocumentIfPresent();
+  } finally {
+    isStoppingAudio = false;
   }
-
-  if (state.audioActive) {
-    addTimeline(`Meeting ended (${reason})`);
-    await savePendingSession();
-  }
-
-  state.audioActive = false;
-  state.isActive = false;
-
-  await broadcastStateUpdate();
-
-  try {
-    await chrome.runtime.sendMessage({ type: "SESSION_ENDED" });
-  } catch {
-    // no listeners
-  }
-
-  await closeOffscreenDocumentIfPresent();
 }
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
@@ -1211,6 +1270,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
+      case "UNEXPECTED_TRACK_END": {
+        await stopAudioCapture(message.reason || "Unexpected track end");
+        sendResponse({ success: true });
+        return;
+      }
+
       case "OFFSCREEN_LOG": {
         console.log("[LateMeet][offscreen]", message.message);
         sendResponse({ success: true });
@@ -1247,6 +1312,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           mimeType: typeof message.mimeType === "string" ? message.mimeType : "audio/webm",
           approxBytes,
           receivedAt: Date.now(),
+          speaker: resolveTranscriptSpeaker(state.currentSpeaker),
         });
 
         if (!result.accepted) {
@@ -1283,6 +1349,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await maybeWelcomeJoiners(sender?.tab?.id || state.targetTabId || undefined, joiners);
         await broadcastStateUpdate();
         sendResponse({ success: true, joiners });
+        return;
+      }
+
+      case "ACTIVE_SPEAKER_CHANGED": {
+        const speaker = normalizeActiveSpeakerName(message.name);
+
+        if (!speaker) {
+          sendResponse({ success: false, error: "Invalid active speaker name" });
+          return;
+        }
+
+        state.currentSpeaker = speaker;
+        await broadcastStateUpdate();
+        sendResponse({ success: true, speaker });
         return;
       }
 

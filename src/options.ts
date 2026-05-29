@@ -38,6 +38,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   const settings: Settings = config.settings || {};
 
   // ——— Populate Existing UI Elements ———
+  const versionDisplay = document.getElementById("version-display");
+  if (versionDisplay) {
+    versionDisplay.textContent = chrome.runtime.getManifest().version;
+  }
 
   // VAD threshold slider
   const vadSlider = document.getElementById("vad-threshold") as HTMLInputElement | null;
