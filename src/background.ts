@@ -316,22 +316,56 @@ function snapshot() {
   };
 }
 
-async function broadcastStateUpdate() {
+async function broadcastStateUpdate(immediate = false) {
+  if (immediate) {
+    pendingBroadcast = false;
+    await executeBroadcast();
+    return;
+  }
+
+  if (pendingBroadcast) return;
+  pendingBroadcast = true;
+
+  const now = Date.now();
+  const elapsed = now - lastBroadcastTime;
+
+  if (elapsed >= BROADCAST_THROTTLE_MS) {
+    pendingBroadcast = false;
+    await executeBroadcast();
+  } else {
+    setTimeout(async () => {
+      if (!pendingBroadcast) return;
+      pendingBroadcast = false;
+      await executeBroadcast();
+    }, BROADCAST_THROTTLE_MS - elapsed);
+  }
+}
+
+const BROADCAST_THROTTLE_MS = 500;
+let lastBroadcastTime = 0;
+let pendingBroadcast = false;
+
+async function executeBroadcast() {
+  lastBroadcastTime = Date.now();
   const snapshotData = snapshot();
   try {
-    // To popup/dashboard
+    // To popup/dashboard — full state
     await chrome.runtime.sendMessage({ type: "STATE_UPDATE", state: snapshotData });
   } catch {
     /* ignore */
   }
 
   try {
-    // To content scripts (floating button)
+    // To content scripts — minimal state (they only need isActive/audioActive for the floating button)
+    const contentState = {
+      isActive: snapshotData.isActive,
+      audioActive: snapshotData.audioActive,
+    };
     const tabs = await chrome.tabs.query({ url: "https://meet.google.com/*" });
     for (const tab of tabs) {
       if (tab.id !== undefined) {
         chrome.tabs
-          .sendMessage(tab.id, { type: "STATE_UPDATE", state: snapshotData })
+          .sendMessage(tab.id, { type: "STATE_UPDATE", state: contentState })
           .catch(() => {});
       }
     }
@@ -1074,12 +1108,12 @@ async function startAudioCapture(
     if (response.microphoneActive === false) {
       addTimeline("Microphone capture unavailable; recording tab audio only");
     }
-    await broadcastStateUpdate();
+    await broadcastStateUpdate(true);
   } catch (err) {
     state.audioActive = false;
     if (createdSession) {
       resetState();
-      await broadcastStateUpdate();
+      await broadcastStateUpdate(true);
     }
     throw err;
   } finally {
@@ -1104,7 +1138,7 @@ async function scanForMeetTabs() {
             state.startTime = Date.now();
             state.participants = ["You"];
             console.log("[LateMeet] Proactively detected meeting:", meetingId);
-            await broadcastStateUpdate();
+            await broadcastStateUpdate(true);
           }
           return;
         }
@@ -1138,7 +1172,7 @@ async function stopAudioCapture(reason = "Stopped") {
     state.audioActive = false;
     state.isActive = false;
 
-    await broadcastStateUpdate();
+    await broadcastStateUpdate(true);
 
     try {
       await chrome.runtime.sendMessage({ type: "SESSION_ENDED" });
@@ -1170,7 +1204,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         state.targetTabId = tabId || null;
         state.startTime = Date.now();
         state.participants = ["You"];
-        await broadcastStateUpdate();
+        await broadcastStateUpdate(true);
       }
     }
   } catch {
@@ -1205,7 +1239,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     } else {
       state.meetingId = null;
       state.targetTabId = null;
-      await broadcastStateUpdate();
+      await broadcastStateUpdate(true);
     }
   }
 });
@@ -1274,7 +1308,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       case "OFFSCREEN_CAPTURE_STOPPED": {
         state.audioActive = false;
-        await broadcastStateUpdate();
+        await broadcastStateUpdate(true);
         sendResponse({ success: true });
         return;
       }
@@ -1358,14 +1392,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       case "SAVE_SESSION": {
         await persistSession();
-        await broadcastStateUpdate();
+        await broadcastStateUpdate(true);
         sendResponse({ success: true });
         return;
       }
 
       case "DISCARD_SESSION": {
         await discardPendingSession();
-        await broadcastStateUpdate();
+        await broadcastStateUpdate(true);
         sendResponse({ success: true });
         return;
       }
