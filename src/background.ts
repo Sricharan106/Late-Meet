@@ -1160,7 +1160,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         return;
       }
 
-      const pathMatch = parsedUrl.pathname.match(/^\/([a-z\-]+)/);
+      const pathMatch = /^\/([a-z-]+)/.exec(parsedUrl.pathname);
       const meetingId = pathMatch ? pathMatch[1] : null;
 
       if (meetingId && meetingId !== "new") {
@@ -1193,7 +1193,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
       return;
     }
 
-    const pathMatch = parsedUrl.pathname.match(/^\/([a-z\-]+)/);
+    const pathMatch = /^\/([a-z-]+)/.exec(parsedUrl.pathname);
     const meetingId = pathMatch ? pathMatch[1] : null;
     if (meetingId && meetingId !== "new" && !state.isActive) {
       state.meetingId = meetingId;
