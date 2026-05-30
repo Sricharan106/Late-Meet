@@ -273,16 +273,16 @@ sequenceDiagram
     participant U as 👤 User
     participant CS as 🖥️ Content Script
     participant BG as 🎼 Background Worker
-    participant OFF as 🎵 Offscreen Doc
+    participant OD as 🎵 Offscreen Doc
     participant EL as 🎤 ElevenLabs Scribe
     participant GPT as 🧠 OpenAI GPT
     participant DB as 📊 Dashboard
 
     U->>CS: Clicks "Start Copilot"
     CS->>BG: startCapture message
-    BG->>OFF: Initialize audio engine
+    BG->>OD: Initialize audio engine
     loop Every 30s
-        OFF->>BG: Audio chunk (blob)
+        OD->>BG: Audio chunk (blob)
         BG->>EL: POST /speech-to-text
         EL-->>BG: Transcript segment
         BG->>GPT: Summarize + extract insights
