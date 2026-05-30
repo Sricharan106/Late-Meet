@@ -508,7 +508,7 @@ async function refineTranscription(rawText: string) {
   if (!apiKey) return rawText;
 
   const systemPrompt = `You are an expert AI transcription editor. 
-Your task is to correct errors, remove filler words (um, uh, like), and improve the clarity of the provided meeting transcript segment while strictly preserving the speaker's original meaning and intent. 
+Your task is to correct errors, remove filler words (um, uh, like), and improve the clarity of the provided meeting transcript segment while strictly preserving the speaker's original meaning and[...]
 Return ONLY the corrected transcript text. If the input is unclear, inaudible, or empty, return the exact input unchanged. Never add commentary, apologies, or meta-responses.`;
 
   try {
@@ -628,9 +628,9 @@ OUTPUT GUIDELINES:
 - Extract only the fields requested by the user prompt.
 ${topicDetectionEnabled ? "- Identify distinct topics and their statuses (active/completed/unresolved)." : ""}
 ${decisionDetectionEnabled ? "- Precisely capture decisions. Classify as 'tentative' if there are hedging phrases (maybe, probably), otherwise 'finalized'." : ""}
-${actionExtractionEnabled ? "- Precisely capture action items. Rate confidence (high/medium/low). Prevent speculative statements from appearing as confirmed by setting isSpeculative to true." : ""}
+${actionExtractionEnabled ? "- Precisely capture action items. Rate confidence (high/medium/low). Prevent speculative statements from appearing as confirmed by setting isSpeculative to true." : "[...]
 ${sentimentAnalysisEnabled ? "- Detect the prevailing sentiment and emotional dynamics." : ""}
-- Extract "Key Insights" with a confidenceScore (0-100) based on linguistic certainty.
+- Extract \"Key Insights\" with a confidenceScore (0-100) based on linguistic certainty.
 - Track contradiction persistence if someone disagrees or contradicts a previous point.
 - Track specific questions raised that remain unanswered.
 
@@ -842,7 +842,7 @@ async function generateLateJoinerMessage(joinerName: string) {
     const apiKey = await getApiKey();
     if (!apiKey) return fallback;
 
-    const prompt = `A participant named ${safeJoinerName} joined late. Meeting duration: ${Math.round(context.duration / 60)} minutes. Current topic: ${sanitizePromptText(context.currentTopic || "General discussion")}. Recent topics: ${sanitizePromptText(JSON.stringify(context.topics || []))}. Decisions: ${sanitizePromptText(JSON.stringify(context.decisions || []))}. Write a short welcome message under 3 sentences. Output plain text only.`;
+    const prompt = `A participant named ${safeJoinerName} joined late. Meeting duration: ${Math.round(context.duration / 60)} minutes. Current topic: ${sanitizePromptText(context.currentTopic || [...]
 
     return await apiQueue.enqueue("late-joiner-message", async () => {
       const response = await fetch(OPENAI_CHAT_URL, {
@@ -1152,46 +1152,38 @@ async function stopAudioCapture(reason = "Stopped") {
   }
 }
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === "complete" && tab.url) {
-    try {
-      const parsedUrl = new URL(tab.url);
-      if (parsedUrl.hostname !== "meet.google.com") {
-        return;
-      }
+chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete" || !tab.url) return;
+  try {
+    const parsedUrl = new URL(tab.url);
+    if (parsedUrl.hostname !== "meet.google.com") return;
 
-      const pathMatch = /^\/([a-z-]+)/.exec(parsedUrl.pathname);
-      const meetingId = pathMatch ? pathMatch[1] : null;
+    const pathMatch = /^\/([a-z-]+)/.exec(parsedUrl.pathname);
+    const meetingId = pathMatch ? pathMatch[1] : null;
 
-      if (meetingId && meetingId !== "new") {
-        if (!state.isActive) {
-          resetState();
-          state.isActive = true;
-          state.meetingId = meetingId;
-          state.meetingUrl = tab.url || null;
-          state.targetTabId = tabId || null;
-          state.startTime = Date.now();
-          state.participants = ["You"];
-          await broadcastStateUpdate();
-        }
+    if (meetingId && meetingId !== "new") {
+      if (!state.isActive) {
+        resetState();
+        state.isActive = true;
+        state.meetingId = meetingId;
+        state.meetingUrl = tab.url || null;
+        state.targetTabId = _tabId || null;
+        state.startTime = Date.now();
+        state.participants = ["You"];
+        await broadcastStateUpdate();
       }
-    } catch {
-      // Ignore invalid or non-standard URLs
     }
+  } catch {
+    // invalid URL — ignore silently
   }
 });
 
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   try {
     const tab = await chrome.tabs.get(activeInfo.tabId);
-    if (!tab.url) {
-      return;
-    }
-
+    if (!tab.url) return;
     const parsedUrl = new URL(tab.url);
-    if (parsedUrl.hostname !== "meet.google.com") {
-      return;
-    }
+    if (parsedUrl.hostname !== "meet.google.com") return;
 
     const pathMatch = /^\/([a-z-]+)/.exec(parsedUrl.pathname);
     const meetingId = pathMatch ? pathMatch[1] : null;
