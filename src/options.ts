@@ -16,6 +16,7 @@ interface Settings {
   decisionDetection?: boolean;
   actionExtraction?: boolean;
   sentimentAnalysis?: boolean;
+  transcriptRefinement?: boolean;
   theme?: "system" | "light" | "dark";
   accent?: string;
   [key: string]: any;
@@ -94,12 +95,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     { id: "decision-toggle", key: "decisionDetection" },
     { id: "action-toggle", key: "actionExtraction" },
     { id: "sentiment-toggle", key: "sentimentAnalysis" },
+    { id: "refinement-toggle", key: "transcriptRefinement" },
   ];
+
+  // Keys that default to off (opt-in features)
+  const defaultOffKeys = new Set(["transcriptRefinement"]);
 
   toggles.forEach((t) => {
     const el = document.getElementById(t.id) as HTMLInputElement | null;
     if (el) {
-      el.checked = settings[t.key] !== false;
+      el.checked = defaultOffKeys.has(t.key) ? settings[t.key] === true : settings[t.key] !== false;
     }
   });
 
@@ -284,6 +289,8 @@ document.addEventListener("DOMContentLoaded", async () => {
           ?.checked,
         actionExtraction: (document.getElementById("action-toggle") as HTMLInputElement)?.checked,
         sentimentAnalysis: (document.getElementById("sentiment-toggle") as HTMLInputElement)
+          ?.checked,
+        transcriptRefinement: (document.getElementById("refinement-toggle") as HTMLInputElement)
           ?.checked,
 
         // Save theme selections into the global config tree bundle block

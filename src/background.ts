@@ -479,6 +479,7 @@ interface Settings {
   decisionDetection?: boolean;
   actionExtraction?: boolean;
   sentimentAnalysis?: boolean;
+  transcriptRefinement?: boolean;
 }
 
 async function getSettings(): Promise<Settings> {
@@ -949,8 +950,11 @@ async function processQueuedAudioChunk({ id, item }: AudioChunkQueueItem<QueuedA
   }
 
   console.log(`[LateMeet] transcript received for chunk ${id} — ${rawText.length} chars`);
-  const refinedText = await refineTranscription(rawText);
-  console.log(`[LateMeet] transcript refined for chunk ${id} — ${refinedText.length} chars`);
+  const settings = await getSettings();
+  const refinedText = settings.transcriptRefinement ? await refineTranscription(rawText) : rawText;
+  if (settings.transcriptRefinement) {
+    console.log(`[LateMeet] transcript refined for chunk ${id} — ${refinedText.length} chars`);
+  }
 
   state.transcript.push({
     speaker: resolveTranscriptSpeaker(item.speaker || state.currentSpeaker),
