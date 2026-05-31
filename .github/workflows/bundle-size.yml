@@ -50,16 +50,16 @@ jobs:
         run: |
           PR_SIZE=$(du -sb pr/dist 2>/dev/null | cut -f1 || echo "0")
           BASE_SIZE=$(du -sb base/dist 2>/dev/null | cut -f1 || echo "0")
-          DIFF=$((PR_SIZE - BASE_SIZE))
+          DIFF=$(("$PR_SIZE" - "$BASE_SIZE"))
 
           # Human readable
           PR_HR=$(numfmt --to=iec-i --suffix=B "$PR_SIZE" 2>/dev/null || echo "${PR_SIZE}B")
           BASE_HR=$(numfmt --to=iec-i --suffix=B "$BASE_SIZE" 2>/dev/null || echo "${BASE_SIZE}B")
 
-          if [ $DIFF -gt 0 ]; then
+          if [ "$DIFF" -gt 0 ]; then
             DIFF_HR="+$(numfmt --to=iec-i --suffix=B "$DIFF" 2>/dev/null || echo "${DIFF}B")"
             EMOJI="📈"
-          elif [ $DIFF -lt 0 ]; then
+          elif [ "$DIFF" -lt 0 ]; then
             DIFF_HR="$(numfmt --to=iec-i --suffix=B -- "$DIFF" 2>/dev/null || echo "${DIFF}B")"
             EMOJI="📉"
           else
@@ -70,7 +70,7 @@ jobs:
           # Check threshold (5MB = 5242880 bytes)
           THRESHOLD=5242880
           WARNING=""
-          if [ $PR_SIZE -gt $THRESHOLD ]; then
+          if [ "$PR_SIZE" -gt $THRESHOLD ]; then
             WARNING="⚠️ **Warning:** Extension bundle exceeds 5MB threshold!"
           fi
 
