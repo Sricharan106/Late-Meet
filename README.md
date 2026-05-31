@@ -8,7 +8,7 @@
 <!-- ╔══════════════════════════════════════════════════════╗ -->
 <!--                     ORIGINAL LOGO                      -->
 <!-- ╚══════════════════════════════════════════════════════╝ -->
-<img src="https://github.com/shouri123/Late-Meet/raw/main/src/icons/icon128.png" width="96" height="96" alt="Late Meet Logo"/>
+<img src="https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/Microphone/3D/microphone_3d.png" width="96" height="96" alt="Late Meet Logo"/>
 
 <br/>
 
@@ -24,9 +24,10 @@
 <!-- ══════════════ BADGE ROW 1 — Identity ══════════════ -->
 
 [![GSSoC 2026](https://img.shields.io/badge/GSSoC-2026-FF6B35?style=for-the-badge&logo=git&logoColor=white)](https://gssoc.girlscript.tech/)
-[![Version](https://img.shields.io/badge/Version-1.1.0-6C63FF?style=for-the-badge&logo=googlechrome&logoColor=white)](https://github.com/shouri123/Late-Meet/releases)
+[![Version](https://img.shields.io/badge/Version-1.2.0-6C63FF?style=for-the-badge&logo=googlechrome&logoColor=white)](https://github.com/shouri123/Late-Meet/releases)
 [![License](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-ff69b4?style=for-the-badge&logo=github&logoColor=white)](CONTRIBUTING.md)
+[![Visitors Counter](https://komarev.com/ghpvc/?username=shouri123&repo=Late-Meet&color=blueviolet&style=for-the-badge&label=Visitors)](https://github.com/shouri123/Late-Meet)
 
 <!-- ══════════════ BADGE ROW 2 — Activity ══════════════ -->
 
@@ -146,55 +147,73 @@ It uses **Chrome's native `tabCapture` API** to intercept audio without adding p
 
 <br/>
 
-<details>
-<summary><b>📊 Dashboard — Real-time intelligence panel</b></summary>
+<details open>
+<summary><b>🎬 Workflow Demo — End-to-End Walkthrough</b></summary>
 <br/>
 
 <div align="center">
-  <img src="https://github.com/shouri123/Late-Meet/raw/main/docs/dashboard_preview.png" alt="Late Meet real-time side-panel dashboard showing live transcription, action items, topics, and sentiment analysis" width="88%"/>
+  <img src="https://github.com/user-attachments/assets/37078eaa-4964-4f4b-a4d8-1283d76fde2c" alt="Late Meet end-to-end product workflow demo GIF" width="88%"/>
   <br/><br/>
-  <sub><i>Live side-panel dashboard — transcription, topics, action items, sentiment, and timeline. All rendered locally in-browser.</i></sub>
+  <sub><i>End-to-end workflow demo — Loading the unpacked extension in Chrome, configuring API keys, joining Google Meet, starting the Copilot, and viewing the live side-panel dashboard.</i></sub>
 </div>
 
 </details>
 
 <details>
-<summary><b>⚡ Late-Joiner Briefing — Catch up in seconds</b></summary>
+<summary><b>📊 Dashboard — Real-time Side Panel</b></summary>
 <br/>
 
-> When you join a meeting already in progress, Late Meet instantly generates a **private overlay** visible only to you — summarising decisions made, topics covered, and key speaker contributions.
->
-> 📸 **This screenshot is a great first contribution!** → [Issue #102](https://github.com/shouri123/Late-Meet/issues/102)
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/fc9c4a23-325f-473d-bbfa-c18951a418bf" alt="Late Meet real-time side-panel dashboard" width="88%"/>
+  <br/><br/>
+  <sub><i>Live side-panel dashboard showing transcription, topics, action items, sentiment analysis, and speaker timelines.</i></sub>
+</div>
 
 </details>
 
 <details>
-<summary><b>⚙️ Options Page — BYOK API key configuration</b></summary>
+<summary><b>⚡ Late-Joiner Briefing — Catch up Overlay</b></summary>
 <br/>
 
-> The Options page lets you securely enter your ElevenLabs and OpenAI API keys. They are stored in `chrome.storage.local` and **never leave your machine**.
->
-> 📸 **Contribute this screenshot!** → [Issue #102](https://github.com/shouri123/Late-Meet/issues/102)
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/7e320db9-f9be-49ad-9c2b-e9ac6415b201" alt="Start Copilot Google Meet overlay" width="88%"/>
+  <br/><br/>
+  <sub><i>Floating meeting copilot injected cleanly onto Google Meet. Join late -> catch up instantly without adding noisy bots.</i></sub>
+</div>
+
+<details>
+<summary><b>🔌 Extension Loaded in Chrome — Developer Mode Setup</b></summary>
+<br/>
+
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/d7a99014-a2e7-475a-81b0-cfee521ba9d8" alt="Late Meet loaded in Chrome extensions" width="88%"/>
+  <br/><br/>
+  <sub><i>Unpacked extension successfully loaded under Developer Mode in Chrome Extensions.</i></sub>
+</div>
 
 </details>
 
 <details>
-<summary><b>🔌 Extension Popup — One-click controls</b></summary>
+<summary><b>⚙️ Options Page — BYOK Key Configuration</b></summary>
 <br/>
 
-> The popup provides a one-click **Start Copilot** action, a live recording duration timer, and quick access to the Options page.
->
-> 📸 **Contribute this screenshot!** → [Issue #102](https://github.com/shouri123/Late-Meet/issues/102)
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/1ceb0397-1607-477a-be23-0b00670bf29b" alt="Options page key configuration" width="88%"/>
+  <br/><br/>
+  <sub><i>Securely input your ElevenLabs and OpenAI API keys. Stored strictly in local browser storage — 100% private.</i></sub>
+</div>
 
 </details>
 
 <details>
-<summary><b>🎬 GIF — Install to first session walkthrough</b></summary>
+<summary><b>🔌 Extension Popup — Quick Action Control</b></summary>
 <br/>
 
-> A complete walkthrough GIF showing: install extension → enter API keys → join Meet → Start Copilot → Side Panel live.
->
-> 🎬 **Contribute this GIF!** → [Issue #102](https://github.com/shouri123/Late-Meet/issues/102) — highest-impact contribution available.
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/69c0048b-da30-4c0d-a501-b9209ff1531c" alt="Late Meet extension popup control" width="40%"/>
+  <br/><br/>
+  <sub><i>One-click Copilot control, live recording duration timer, and direct access to options.</i></sub>
+</div>
 
 </details>
 
@@ -265,16 +284,16 @@ sequenceDiagram
     participant U as 👤 User
     participant CS as 🖥️ Content Script
     participant BG as 🎼 Background Worker
-    participant OFF as 🎵 Offscreen Doc
+    participant OD as 🎵 Offscreen Doc
     participant EL as 🎤 ElevenLabs Scribe
     participant GPT as 🧠 OpenAI GPT
     participant DB as 📊 Dashboard
 
     U->>CS: Clicks "Start Copilot"
     CS->>BG: startCapture message
-    BG->>OFF: Initialize audio engine
+    BG->>OD: Initialize audio engine
     loop Every 30s
-        OFF->>BG: Audio chunk (blob)
+        OD->>BG: Audio chunk (blob)
         BG->>EL: POST /speech-to-text
         EL-->>BG: Transcript segment
         BG->>GPT: Summarize + extract insights
@@ -612,6 +631,7 @@ git push origin feature/your-feature-name
 
 ### Open Issues by Difficulty
 
+<!-- START_ISSUE_TABLES -->
 <div align="center">
 
 #### 🟢 Beginner — `level-1`
@@ -650,6 +670,7 @@ git push origin feature/your-feature-name
 |  [#99](https://github.com/shouri123/Late-Meet/issues/99)  | Speaker confidence collapse detection | NLP, TypeScript |
 
 </div>
+<!-- END_ISSUE_TABLES -->
 
 ### PR Checklist
 
@@ -703,6 +724,19 @@ Before submitting, verify all boxes:
 </div>
 
 > 🐛 Found a new bug? Use our [Bug Report template](https://github.com/shouri123/Late-Meet/issues/new/choose) to open a structured report.
+
+---
+
+## ⌨️ Keyboard Shortcuts
+
+Control Late Meet without touching your mouse — perfect for accessibility and power users.
+
+| Shortcut       | Mac           | Action                  |
+| :------------- | :------------ | :---------------------- |
+| `Ctrl+Shift+S` | `Cmd+Shift+S` | Toggle recording on/off |
+| `Ctrl+Shift+P` | `Cmd+Shift+P` | Open the side panel     |
+
+> Shortcuts can be customized at `chrome://extensions/shortcuts`.
 
 ---
 
@@ -889,9 +923,9 @@ in the Software without restriction...
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0a0a1a,30:16213e,60:1a1a3e,100:0d0d0d&height=140&section=footer&animation=fadeIn" width="100%" alt="Footer"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0a0a1a,30:16213e,60:1a1a3e,100:0d0d0d&height=140&section=footer&text=late-meet&fontSize=45&fontColor=ffffff&fontAlignY=50&animation=fadeIn" width="100%" alt="Footer"/>
 
-<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&size=14&duration=3000&pause=1000&color=6C63FF&center=true&vCenter=true&multiline=false&repeat=true&width=600&height=36&lines=Built+for+teams+who+value+focus%2C+privacy%2C+and+speed.+%F0%9F%9A%80;shouri123%2FLate-Meet+·+MIT+License+·+GSSoC+2026" alt="Footer typing"/>
+<img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&size=14&duration=3000&pause=1000&color=6C63FF&center=true&vCenter=true&multiline=false&repeat=true&width=600&height=36&lines=Built+for+teams+who+value+focus%2C+privacy%2C+and+speed.+%F0%9F%9A%80;shouri123+-+Late-Meet+%7C+MIT+License+%7C+GSSoC+2026;late-meet" alt="Footer typing"/>
 
 <br/>
 
