@@ -14,13 +14,28 @@ import assert from "node:assert/strict";
 // Chrome API mock
 // ---------------------------------------------------------------------------
 
+// Fallback interfaces for types not exported by @types/chrome
+interface TabChangeInfo {
+  status?: string;
+  url?: string;
+  pinned?: boolean;
+  audible?: boolean;
+  mutedInfo?: chrome.tabs.MutedInfo;
+  [key: string]: any;
+}
+
+interface TabActiveInfo {
+  tabId: number;
+  windowId: number;
+}
+
 type TabUpdatedCallback = (
   tabId: number,
-  changeInfo: chrome.tabs.TabChangeInfo,
+  changeInfo: TabChangeInfo,
   tab: chrome.tabs.Tab,
 ) => Promise<void>;
 
-type TabActivatedCallback = (activeInfo: chrome.tabs.TabActiveInfo) => Promise<void>;
+type TabActivatedCallback = (activeInfo: TabActiveInfo) => Promise<void>;
 
 interface CapturedListeners {
   onUpdated?: TabUpdatedCallback;
