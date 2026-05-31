@@ -17,9 +17,10 @@ Late Meet is a **Manifest V3 Chrome Extension** built with TypeScript and Vite 5
 | **Content Script**            | `content.ts`, `content.css`                       | Injects floating UI elements into Google Meet pages. Handles the "Start Copilot" button, late-joiner briefing overlays, and chat automation for welcome messages. |
 | **Side Panel Dashboard**      | `dashboard.ts`, `dashboard.html`, `dashboard.css` | Real-time intelligence display. Shows live summary, topics, decisions, action items, sentiment analysis, and meeting timeline.                                    |
 | **Popup**                     | `popup.ts`, `popup.html`, `popup.css`             | Quick-access extension controls. Start/stop copilot, view meeting status, navigate to dashboard.                                                                  |
-| **Options Page**              | `options.ts`, `options.html`, `options.css`       | API key configuration. Users enter their ElevenLabs and OpenAI keys (BYOK model).                                                                                 |
-| **Audio Processing**          | `audioProcessing.ts`                              | Utility functions for audio format handling and MIME type detection.                                                                                              |
-| **Type Definitions**          | `types.ts`                                        | TypeScript interfaces for meeting state, participants, timeline entries, etc.                                                                                     |
+| **Options Page**              | `options.ts`, `options.html`, `options.css`       | API key configuration and local preferences. Users enter their ElevenLabs and OpenAI keys (BYOK model).                                                           |
+| **Storage Utilities**         | `sessionStorage.ts`, `utils/storageUtils.ts`      | Session persistence, storage metrics, cleanup functions, legacy support, and local storage quotas.                                                                |
+| **AI Prompts + Processing**   | `utils/prompts.ts`, `utils/api.ts`                | Prompt construction and provider wrappers for OpenAI / ElevenLabs validation and transcription.                                                                   |
+| **Type Definitions**          | `types.ts`                                        | TypeScript interfaces for meeting state, participants, timeline entries, transcript chunks, and analytics.                                                        |
 
 ## 🔄 Data Flow
 
@@ -38,6 +39,148 @@ Every meeting session follows this end-to-end pipeline — from the moment you j
 |  9   | 💾 **chrome.storage.local** | Structured results saved locally                                             |
 |  10  | 📊 **Side panel dashboard** | Polls storage → renders live updates                                         |
 |  11  | ✅ **User**                 | Meeting ends → chooses **Save** or **Discard**                               |
+
+## Project Structure
+
+The codebase is organized around extension layers and domain concerns.
+
+- `src/` — extension source code.
+  - `background.ts` — MV3 service worker orchestrating state, audio capture, and AI work.
+  - `offscreen.ts` / `offscreen.html` — hidden document used for `chrome.tabCapture` and `MediaRecorder` audio processing.
+  - `content.ts` / `content.css` — Google Meet page integration, floating UI injection, and meeting detection.
+  - `dashboard.ts` / `dashboard.html` / `dashboard.css` — side panel dashboard rendering, state consumption, and dashboard interactions.
+  - `popup.ts` / `popup.html` / `popup.css` — quick extension controls and status display.
+  - `options.ts` / `options.html` / `options.css` — user settings, API credential entry and validation.
+  - `utils/` — reusable helpers for API calls, credentials encryption, prompts, and storage metrics.
+  - `types.ts` — shared TypeScript interfaces used across components.
+
+- `docs/` — contributor-facing architecture, workflow, and troubleshooting documentation.
+
+- `manifest.json` — Chrome extension metadata, permissions, commands, and side panel configuration.
+
+- `package.json` / `vite.config.ts` — build tooling and extension packaging configuration.
+
+## Audio Capture Flow
+
+Late Meet separates audio capture into two layers to satisfy MV3 constraints.
+
+1. **Meet Detection** (`content.ts`)
+   - Detects a Google Meet page using URL pattern matching (`meet.google.com/*`).
+   - Injects the Start Copilot UI overlay and sends meeting state updates to `background.ts`.
+
+2. **Capture Initialization** (`background.ts`)
+   - Receives a user command to start Copilot from the popup or content script.
+   - Creates or reactivates an offscreen document via `chrome.offscreen.createDocument`.
+   - Uses `chrome.tabCapture.getMediaStreamId` with the Meet tab ID, then forwards that stream ID to `offscreen.ts`.
+
+3. **Offscreen Processing** (`offscreen.ts`)
+   - Opens a hidden page that can access DOM and media APIs.
+   - Starts `MediaRecorder` on the captured audio stream.
+   - Emits recorded audio chunks back to `background.ts` via runtime messages.
+
+4. **Speech-to-Text Routing** (`background.ts`)
+   - Receives audio chunks and decides whether to use ElevenLabs or OpenAI Whisper.
+   - Sends audio blobs to the configured provider and awaits transcript results.
+   - Appends transcript entries to the in-memory state and persists them if needed.
+
+```mermaid
+flowchart LR
+  A[Google Meet tab] --> B[content.ts detect meeting]
+  B --> C[background.ts start Copilot]
+  C --> D[offscreen.ts create audio stream]
+  D --> E[MediaRecorder captures chunks]
+  E --> F[background.ts receives audio blobs]
+  F --> G[STT provider (ElevenLabs/Whisper)]
+  G --> H[Transcript state update]
+```
+
+## AI Processing Flow
+
+Once transcript text arrives, the background worker coordinates analysis and summary generation.
+
+- Each transcript chunk is added to the meeting state along with metadata like `chunkId`, `timestamp`, and `speaker`.
+- `summarizeTranscriptIfNeeded()` wakes periodically based on user settings and the latest transcript activity.
+- The prompt builder in `utils/prompts.ts` constructs a JSON-focused request for summary, topics, decisions, and actions.
+- OpenAI GPT processes the transcript window and returns a structured JSON payload.
+- Background logic merges new decisions, actions, and summary points into persistent state while avoiding duplicates.
+
+### Structured AI Output
+
+Late Meet expects the AI response to contain fields such as:
+
+- `summary`
+- `summaryItems`
+- `topics`
+- `decisions`
+- `actionItems`
+- `sentiment`
+- `keyInsights`
+
+This keeps the dashboard rendering code independent from raw AI responses.
+
+## Storage Architecture
+
+Late Meet uses `chrome.storage.local` as its single source of truth for saved sessions and settings.
+
+- Active meeting state is stored under `activeMeetingState` and broadcast to UI components.
+- Saved sessions are stored individually as `savedSession:<id>` keys with a separate index key `savedSessionIndex`.
+- Legacy fallback support uses `savedSessions` for older releases.
+- `utils/storageUtils.ts` computes storage usage, session sizes, and quota metrics.
+- Bulk cleanup APIs in `sessionStorage.ts` remove saved payloads and keep the session index in sync.
+
+```mermaid
+flowchart LR
+  A[background.ts state] --> B[chrome.storage.local activeMeetingState]
+  B --> C[dashboard.ts reads state]
+  C --> D[render UI]
+  A --> E[savedSession:<id> payloads]
+  E --> F[sessionStorage.ts delete / cleanup]
+```
+
+## Dashboard Workflow
+
+`dashboard.ts` is responsible for reading stored state and updating the UI.
+
+- On load, it hydrates the latest meeting state from `background.ts` and `chrome.storage.local`.
+- It only renders data; it does not perform core business logic such as transcription or summarization.
+- Components like summary, decisions, and action items are updated when `background.ts` broadcasts state changes.
+- The dashboard also exposes export functions and transcript navigation.
+
+## Extension Lifecycle
+
+The Late Meet lifecycle follows these phases:
+
+1. **Install / first run**
+   - `background.ts` registers commands and context menus.
+   - If onboarding is not complete, first-run setup may be launched.
+
+2. **Initialization**
+   - The service worker hydrates state from `chrome.storage.local`.
+   - UI components connect to the background with message listeners.
+
+3. **Meeting detection**
+   - `content.ts` detects Google Meet pages and reports status.
+   - The user can start Copilot from the injected overlay or popup.
+
+4. **Active session**
+   - The background worker creates an offscreen document and begins audio capture.
+   - Transcript, summary, and intelligence are generated live.
+
+5. **Session completion**
+   - The user may save, export, or discard the session.
+   - Saved session state is persisted and available in storage dashboards.
+
+## Privacy & Security Model
+
+Late Meet is intentionally local-first.
+
+- No project-managed databases or external session storage.
+- Users provide their own OpenAI and ElevenLabs API keys.
+- Persistent meeting data is stored locally on the user's device (`chrome.storage.local`).
+- Audio/transcript content is transmitted only to user-configured providers (BYOK) for transcription/summarization.
+- `chrome.storage.local` is the only persistent storage mechanism.
+
+---
 
 ### What OpenAI GPT generates at Step 8
 

@@ -14,6 +14,10 @@ This guide shows the end-to-end Late Meet workflow, from installation to meeting
 | 6    | Open dashboard                  | Live summary, topics, decisions, and actions are shown   |
 | 7    | Review output                   | User can catch up, export, save, or discard meeting data |
 
+- First-time users may see a guided onboarding wizard during setup.
+- Keyboard shortcuts allow quick meeting actions without leaving the Meet tab.
+- Timestamp-linked transcript navigation helps users jump from summary items to exact transcript chunks.
+
 ```mermaid
 flowchart LR
     subgraph Setup["Setup"]
@@ -132,6 +136,8 @@ Use the dashboard export action when you need a copy of the meeting summary outs
 ## 11. End Meeting or Discard Data
 
 When the meeting is finished, decide whether the session output should be saved, exported, or discarded. This keeps the workflow aligned with Late Meet's local-first privacy model.
+
+- Use the Storage Usage Dashboard to inspect saved sessions, see storage quotas, and clean up old meeting data.
 
 ## Workflow Quality Checklist
 
