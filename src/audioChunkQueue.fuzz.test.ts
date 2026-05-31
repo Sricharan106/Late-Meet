@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import fc from "fast-check";
 import { AudioChunkQueue } from "./audioChunkQueue.ts";
 
-async function waitForDrain() {
-  await Promise.resolve();
-  await Promise.resolve();
+async function waitForQueueToDrain(queue: AudioChunkQueue<any>) {
+  // Dynamically yield the event loop until the queue has completely finished processing all items
+  while (queue.pending > 0 || queue.isProcessing) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 test("AudioChunkQueue: property-based fuzz testing of enqueue backlog and FIFO ordering", async () => {
@@ -45,8 +47,8 @@ test("AudioChunkQueue: property-based fuzz testing of enqueue backlog and FIFO o
           }
         }
 
-        // 2. Wait for the asynchronous queue drain to execute
-        await waitForDrain();
+        // 2. Wait for the queue to drain completely
+        await waitForQueueToDrain(queue);
 
         // 3. Verify that only the accepted items were processed, in exact FIFO order
         const expectedProcessed = items.slice(0, limit);
