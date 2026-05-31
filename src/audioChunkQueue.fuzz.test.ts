@@ -3,9 +3,15 @@ import assert from "node:assert/strict";
 import fc from "fast-check";
 import { AudioChunkQueue } from "./audioChunkQueue.ts";
 
-async function waitForQueueToDrain(queue: AudioChunkQueue<any>) {
+async function waitForQueueToDrain(queue: AudioChunkQueue<any>, timeoutMs = 5000) {
+  const start = Date.now();
   // Dynamically yield the event loop until the queue has completely finished processing all items
   while (queue.pending > 0 || queue.isProcessing) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(
+        `Queue drain timeout: pending=${queue.pending}, isProcessing=${queue.isProcessing}, timeoutMs=${timeoutMs}`,
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
