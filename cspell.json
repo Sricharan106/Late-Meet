@@ -50,7 +50,10 @@
     "bundler",
     "prebuild",
     "postbuild",
-    "precommit"
+    "precommit",
+    "emnapi",
+    "byok",
+    "fast-check"
   ],
   "ignorePaths": [
     "node_modules",
