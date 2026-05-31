@@ -1630,8 +1630,21 @@ function createContextMenu() {
   });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
   createContextMenu();
+  try {
+    const vals = await chrome.storage.local.get(["onboardingCompleted"]);
+    if (!vals?.onboardingCompleted) {
+      const url = chrome.runtime.getURL("src/options.html?onboarding=1");
+      try {
+        await chrome.tabs.create({ url });
+      } catch (e) {
+        console.warn("[LateMeet] Could not open onboarding tab on install:", e);
+      }
+    }
+  } catch (e) {
+    console.warn("[LateMeet] onInstalled storage check failed:", e);
+  }
 });
 
 chrome.runtime.onStartup.addListener(() => {
