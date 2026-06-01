@@ -632,8 +632,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     return map[sentiment] || "—";
   }
 
-  function sanitizeTopicStatus(status: string) {
-    return status === "completed" ? "completed" : "active";
+  function sanitizeTopicStatus(status: string): string {
+    if (status === "completed" || status === "unresolved") return status;
+    return "active";
   }
 
   function escapeHtml(value: string | null | undefined) {

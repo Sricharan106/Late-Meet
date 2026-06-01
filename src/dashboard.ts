@@ -81,6 +81,33 @@ async function persistActionStatuses() {
   }
 }
 
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes.actionItemStatuses) {
+    const newVal = changes.actionItemStatuses.newValue;
+    if (newVal && typeof newVal === "object") {
+      for (const [k, v] of Object.entries(newVal)) {
+        actionStatuses.set(k, Boolean(v));
+      }
+
+      const checkboxes = document.querySelectorAll<HTMLInputElement>(".action-checkbox");
+      checkboxes.forEach((cb) => {
+        const meetId = cb.dataset.meetingId || currentMeetingId;
+        const taskText = cb.dataset.task || "";
+        const key = buildActionStatusKey(meetId, taskText);
+        const isDone = actionStatuses.get(key) === true;
+
+        if (cb.checked !== isDone) {
+          cb.checked = isDone;
+          const wrapper = cb.closest(".action-item");
+          const taskDiv = wrapper?.querySelector(".action-task");
+          wrapper?.classList.toggle("action-item--done", isDone);
+          taskDiv?.classList.toggle("action-task--done", isDone);
+        }
+      });
+    }
+  }
+});
+
 document.addEventListener("DOMContentLoaded", async () => {
   // ——— Transcript Search DOM Elements (Queried early to prevent TDZ) ———
   const searchInput = document.getElementById("transcript-search-input") as HTMLInputElement | null;
@@ -442,7 +469,28 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // Summary
     const summaryEl = document.getElementById("dash-summary");
-    if (summaryEl) summaryEl.textContent = state.summary || "Waiting for conversation to begin...";
+    if (summaryEl) {
+      if (Array.isArray(state.summaryItems) && state.summaryItems.length > 0) {
+        summaryEl.innerHTML = state.summaryItems
+          .map((item) => {
+            const label = escapeHtml(item.timestampLabel || item.timestamp || "00:00");
+            const timestampChunk = item.chunkId
+              ? `<button type="button" class="timestamp-link" data-chunk-id="${escapeHtml(
+                  item.chunkId,
+                )}" aria-label="Jump to transcript at ${label}">${label}</button>`
+              : `<span class="timestamp-text">${label}</span>`;
+            return `
+              <div class="summary-item">
+                <div class="summary-text">${escapeHtml(item.text || "")}</div>
+                <div class="summary-meta">${timestampChunk}</div>
+              </div>
+            `;
+          })
+          .join("");
+      } else {
+        summaryEl.textContent = state.summary || "Waiting for conversation to begin...";
+      }
+    }
 
     // Current Topic
     const topicEl = document.getElementById("dash-current-topic");
@@ -494,6 +542,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // Transcript Tab
     if (loadedTabs.has("transcript")) updateTranscript(state.transcript);
+    attachTimestampLinkListeners();
   }
 
   // ——— Sentiment ———
@@ -610,14 +659,23 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
     container.innerHTML = decisions
-      .map(
-        (d) => `
+      .map((d) => {
+        const label = escapeHtml(d.timestampLabel || d.timestamp || "00:00");
+        const timestampChunk = d.chunkId
+          ? `<button type="button" class="timestamp-link" data-chunk-id="${escapeHtml(
+              d.chunkId,
+            )}" aria-label="Jump to transcript at ${label}">${label}</button>`
+          : d.timestamp
+            ? ` <span class="timestamp-text">${escapeHtml(d.timestamp)}</span>`
+            : "";
+
+        return `
       <div class="decision-item">
         <div class="decision-text">${escapeHtml(d.text || "")} ${d.classification === "tentative" ? '<span style="font-size: 11px; background: #FEF3C7; color: #D97706; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">Tentative</span>' : ""}</div>
-        <div class="decision-meta">${d.by ? `By ${escapeHtml(d.by)}` : ""} ${d.timestamp ? `• ${escapeHtml(d.timestamp)}` : ""}</div>
+        <div class="decision-meta">${d.by ? `By ${escapeHtml(d.by)}` : ""}${timestampChunk ? ` • ${timestampChunk}` : ""}</div>
       </div>
-    `,
-      )
+    `;
+      })
       .join("");
   }
 
@@ -690,6 +748,23 @@ document.addEventListener("DOMContentLoaded", async () => {
         deadlineDiv.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" style="margin-right:2px"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"></rect><line x1="16" x2="16" y1="2" y2="6"></line><line x1="8" x2="8" y1="2" y2="6"></line><line x1="3" x2="21" y1="10" y2="10"></line></svg>`;
         deadlineDiv.appendChild(document.createTextNode(deadline));
         label.appendChild(deadlineDiv);
+      }
+
+      const timestampLabel = a.timestampLabel || a.timestamp;
+      if (timestampLabel) {
+        const timestampButton = document.createElement("button");
+        timestampButton.type = "button";
+        timestampButton.className = "timestamp-link";
+        timestampButton.textContent = timestampLabel;
+        timestampButton.setAttribute("aria-label", `Jump to transcript at ${timestampLabel}`);
+        if (a.chunkId) {
+          timestampButton.dataset.chunkId = a.chunkId;
+          timestampButton.dataset.hasListener = "true";
+        } else {
+          timestampButton.disabled = true;
+          timestampButton.classList.add("timestamp-text");
+        }
+        label.appendChild(timestampButton);
       }
 
       checkbox.addEventListener("change", () => {
@@ -848,13 +923,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    const startTime = transcript[0]?.timestamp || Date.now();
-
     transcriptContainer.innerHTML = transcript
       .map((entry) => {
-        const timestamp = entry.timestamp || Date.now();
-        const elapsed = Math.round((timestamp - startTime) / 1000);
-        const timeStr = formatDuration(elapsed);
+        const timeStr = escapeHtml(entry.timestampLabel || formatDuration(entry.timestamp || 0));
         const speaker = escapeHtml(entry.speaker || "Unknown");
         const initials = speaker
           .split(" ")
@@ -865,9 +936,10 @@ document.addEventListener("DOMContentLoaded", async () => {
           .slice(0, 2);
         const isAudio = (entry.speaker || "") === "Audio";
         const text = escapeHtml(entry.text || "");
+        const chunkId = entry.id ? `transcript-${escapeHtml(entry.id)}` : "";
 
         return `
-        <div class="transcript-entry ${isAudio ? "audio-source" : ""}">
+        <div id="${chunkId}" class="transcript-entry ${isAudio ? "audio-source" : ""}">
           <div class="transcript-time">${timeStr}</div>
           <div class="transcript-avatar">${isAudio ? "🎙" : initials}</div>
           <div class="transcript-body">
@@ -885,6 +957,36 @@ document.addEventListener("DOMContentLoaded", async () => {
       transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
       updateTranscriptSearchControls();
     }
+  }
+
+  function navigateToTranscriptChunk(chunkId: string) {
+    const transcriptEl = document.getElementById(`transcript-${chunkId}`);
+    if (!transcriptEl) return;
+    transcriptEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    highlightTranscriptChunk(transcriptEl);
+  }
+
+  function highlightTranscriptChunk(element: HTMLElement) {
+    element.classList.add("transcript-highlight");
+    window.setTimeout(() => {
+      element.classList.remove("transcript-highlight");
+    }, 4000);
+  }
+
+  function attachTimestampLinkListeners() {
+    document.querySelectorAll<HTMLButtonElement>(".timestamp-link").forEach((button) => {
+      const chunkId = button.dataset.chunkId;
+      if (!chunkId) return;
+      if (button.dataset.hasListener) return;
+      button.addEventListener("click", () => navigateToTranscriptChunk(chunkId));
+      button.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          navigateToTranscriptChunk(chunkId);
+        }
+      });
+      button.dataset.hasListener = "true";
+    });
   }
 
   // ——— Unified Export Helper (Handles both Live & History) ———
@@ -1001,22 +1103,74 @@ document.addEventListener("DOMContentLoaded", async () => {
   const exportBtn = document.getElementById("export-btn") as HTMLButtonElement;
   const exportDropdown = document.getElementById("export-dropdown") as HTMLDivElement;
 
+  function openExportDropdown() {
+    exportDropdown.removeAttribute("hidden");
+    exportBtn.setAttribute("aria-expanded", "true");
+    const firstItem = exportDropdown.querySelector('[role="menuitem"]') as HTMLElement | null;
+    firstItem?.focus();
+  }
+
+  function closeExportDropdown(returnFocus = true) {
+    exportDropdown.setAttribute("hidden", "");
+    exportBtn.setAttribute("aria-expanded", "false");
+    if (returnFocus) exportBtn.focus();
+  }
+
   exportBtn?.addEventListener("click", () => {
     const isHidden = exportDropdown.hasAttribute("hidden");
     if (isHidden) {
-      exportDropdown.removeAttribute("hidden");
-      exportBtn.setAttribute("aria-expanded", "true");
+      openExportDropdown();
     } else {
-      exportDropdown.setAttribute("hidden", "");
-      exportBtn.setAttribute("aria-expanded", "false");
+      closeExportDropdown(false);
+    }
+  });
+
+  exportBtn?.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+      if (exportDropdown.hasAttribute("hidden")) {
+        e.preventDefault();
+        openExportDropdown();
+      }
+    }
+  });
+
+  exportDropdown?.addEventListener("keydown", (e: KeyboardEvent) => {
+    const items = Array.from(exportDropdown.querySelectorAll('[role="menuitem"]')) as HTMLElement[];
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+
+    switch (e.key) {
+      case "Escape":
+        e.preventDefault();
+        closeExportDropdown();
+        break;
+      case "ArrowDown":
+        e.preventDefault();
+        items[(currentIndex + 1) % items.length]?.focus();
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        items[(currentIndex - 1 + items.length) % items.length]?.focus();
+        break;
+      case "Home":
+        e.preventDefault();
+        items[0]?.focus();
+        break;
+      case "End":
+        e.preventDefault();
+        items.at(-1)?.focus();
+        break;
+      case "Tab":
+        closeExportDropdown(false);
+        break;
+      default:
+        break;
     }
   });
 
   document.addEventListener("click", (e: MouseEvent) => {
     const wrapper = document.getElementById("export-wrapper");
     if (wrapper && !wrapper.contains(e.target as Node)) {
-      exportDropdown?.setAttribute("hidden", "");
-      exportBtn?.setAttribute("aria-expanded", "false");
+      closeExportDropdown(false);
     }
   });
 
@@ -1207,17 +1361,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       container
         .querySelectorAll<HTMLButtonElement>(".session-export-btn:not(.session-download-btn)")
         .forEach((btn) => {
-          btn.addEventListener("click", () => {
+          btn.addEventListener("click", async () => {
             const sessionId = btn.dataset.sessionId;
-            const session = sessions.find((s: State) => (s.id ?? "") === sessionId);
+            const session = sessionId ? await loadFullSavedSession(sessionId) : null;
             if (session) exportSessionMarkdown(session);
           });
         });
 
       container.querySelectorAll<HTMLButtonElement>(".session-download-btn").forEach((btn) => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", async () => {
           const sessionId = btn.dataset.sessionId;
-          const session = sessions.find((s: State) => (s.id ?? "") === sessionId);
+          const session = sessionId ? await loadFullSavedSession(sessionId) : null;
           if (session) downloadSessionMarkdown(session);
         });
       });
@@ -1262,6 +1416,26 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   // ——— HISTORY EXPORT ACTIONS (Now perfectly unified with the dynamic generator!) ———
+  async function loadFullSavedSession(sessionId: string): Promise<State | null> {
+    try {
+      const session: State | null = await chrome.runtime.sendMessage({
+        type: "GET_SAVED_SESSION",
+        sessionId,
+      });
+
+      if (!session) {
+        showToast("Saved session data could not be found", "error");
+        return null;
+      }
+
+      return session;
+    } catch (err) {
+      const e = err as Error;
+      showToast("Failed to load saved session: " + (e.message || String(e)), "error");
+      return null;
+    }
+  }
+
   function exportSessionMarkdown(session: State) {
     const md = generateMarkdown(session);
 
