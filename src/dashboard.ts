@@ -1115,7 +1115,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     txt += `Key Decisions\n`;
     if (state.decisions?.length) {
       state.decisions.forEach((d: Decision) => {
-        txt += `  • ${d.text}${d.by ? ` — ${d.by}` : ""}\n`;
+        const byStr = d.by ? " — " + d.by : "";
+        txt += `  • ${d.text}${byStr}\n`;
       });
       txt += "\n";
     } else {
