@@ -118,9 +118,9 @@ async function updateReadme() {
     console.log(`Fetched ${issues.length} open issues.`);
 
     console.log("Generating difficulty tables...");
-    const beginnerTable = generateTable(issues, "level-1");
-    const intermediateTable = generateTable(issues, "level-2");
-    const advancedTable = generateTable(issues, "level-3");
+    const beginnerTable = generateTable(issues, "level:beginner");
+    const intermediateTable = generateTable(issues, "level:intermediate");
+    const advancedTable = generateTable(issues, "level:advanced");
 
     const replacement = `<!-- START_ISSUE_TABLES -->
 <div align="center">
