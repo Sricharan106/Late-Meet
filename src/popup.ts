@@ -652,4 +652,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       el.style.animation = "";
     }, 400);
   }
+
+  // ——— Cleanup on popup close ———
+  window.addEventListener("unload", () => {
+    if (durationInterval) {
+      clearInterval(durationInterval as number);
+      durationInterval = null;
+    }
+  });
 });
