@@ -365,6 +365,7 @@ function snapshot() {
     startTime: state.startTime,
     duration: getDuration(),
     summary: state.summary,
+    summaryItems: state.summaryItems,
     topics: state.topics,
     decisions: state.decisions,
     actionItems: state.actionItems,

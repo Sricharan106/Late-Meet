@@ -21,6 +21,7 @@ function makeSession(id: string, savedAt: number): StoredSession {
     meetingUrl: null,
     startTime: savedAt,
     summary: `Summary ${id}`,
+    summaryItems: [{ text: `Summary item ${id}`, timestamp: "00:10" }],
     topics: [],
     decisions: [],
     actionItems: [],
