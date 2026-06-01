@@ -1,10 +1,6 @@
 import { getApiCredentials, saveApiCredentials } from "./utils/credentials";
 import { validateOpenAIKey, validateElevenLabsKey } from "./utils/api";
 
-function escapeHtml(s: string) {
-  return s ? s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;") : "";
-}
-
 export async function renderOnboarding(container: HTMLElement) {
   container.hidden = false;
   container.innerHTML = `
@@ -167,7 +163,7 @@ export async function renderOnboarding(container: HTMLElement) {
       const openBtn = container.querySelector<HTMLButtonElement>("#onb-open-dashboard");
       const finishBtn = container.querySelector<HTMLButtonElement>("#onb-finish");
       openBtn?.addEventListener("click", async () => {
-        await chrome.sidePanel.open({});
+        await chrome.sidePanel.open({ tabId: chrome.tabs.TAB_ID_CURRENT });
       });
       finishBtn?.addEventListener("click", async () => {
         await chrome.storage.local.set({ onboardingCompleted: true });
