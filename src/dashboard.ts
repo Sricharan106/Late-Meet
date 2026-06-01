@@ -5,7 +5,6 @@ import {
   TimelineEvent,
   Decision,
   ActionItem,
-  SummaryItem,
   KeyInsight,
 } from "./types";
 import { initTheme } from "./theme.js";
@@ -921,8 +920,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    const startTime = transcript[0]?.timestamp || Date.now();
-
     transcriptContainer.innerHTML = transcript
       .map((entry) => {
         const timeStr = escapeHtml(entry.timestampLabel || formatDuration(entry.timestamp || 0));
@@ -1360,17 +1357,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       container
         .querySelectorAll<HTMLButtonElement>(".session-export-btn:not(.session-download-btn)")
         .forEach((btn) => {
-          btn.addEventListener("click", () => {
+          btn.addEventListener("click", async () => {
             const sessionId = btn.dataset.sessionId;
-            const session = sessions.find((s: State) => (s.id ?? "") === sessionId);
+            const session = sessionId ? await loadFullSavedSession(sessionId) : null;
             if (session) exportSessionMarkdown(session);
           });
         });
 
       container.querySelectorAll<HTMLButtonElement>(".session-download-btn").forEach((btn) => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", async () => {
           const sessionId = btn.dataset.sessionId;
-          const session = sessions.find((s: State) => (s.id ?? "") === sessionId);
+          const session = sessionId ? await loadFullSavedSession(sessionId) : null;
           if (session) downloadSessionMarkdown(session);
         });
       });
@@ -1415,6 +1412,26 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   // ——— HISTORY EXPORT ACTIONS (Now perfectly unified with the dynamic generator!) ———
+  async function loadFullSavedSession(sessionId: string): Promise<State | null> {
+    try {
+      const session: State | null = await chrome.runtime.sendMessage({
+        type: "GET_SAVED_SESSION",
+        sessionId,
+      });
+
+      if (!session) {
+        showToast("Saved session data could not be found", "error");
+        return null;
+      }
+
+      return session;
+    } catch (err) {
+      const e = err as Error;
+      showToast("Failed to load saved session: " + (e.message || String(e)), "error");
+      return null;
+    }
+  }
+
   function exportSessionMarkdown(session: State) {
     const md = generateMarkdown(session);
 
