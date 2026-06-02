@@ -1189,9 +1189,23 @@ async function savePendingSession() {
     await savePendingMeetingSession(chrome.storage.local, session);
   } catch (err) {
     console.error("[LateMeet] Failed to save pending session:", err);
+
     if (isStorageQuotaError(err)) {
+      try {
+        const sessions = await getSavedMeetingSessions(chrome.storage.local);
+        if (sessions.length > 0) {
+          const oldest = sessions[sessions.length - 1];
+          await deleteSavedMeetingSession(chrome.storage.local, oldest.id);
+          console.log("[LateMeet] Evicted oldest session to free quota:", oldest.id);
+          await savePendingMeetingSession(chrome.storage.local, session);
+          return;
+        }
+      } catch (recoveryErr) {
+        console.error("[LateMeet] Quota recovery failed:", recoveryErr);
+      }
+
       console.error(
-        "[LateMeet] Storage quota reached while saving pending session. Keep this extension active and export the session before closing Chrome.",
+        "[LateMeet] Storage quota reached while saving pending session and recovery failed.",
       );
     }
   }
