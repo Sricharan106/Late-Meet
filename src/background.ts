@@ -746,8 +746,10 @@ async function summarizeTranscriptIfNeeded() {
 
   const settings = await getSettings();
   const requestedInterval = Number(settings.summarizationInterval);
-  const intervalSeconds =
+  let intervalSeconds =
     Number.isFinite(requestedInterval) && requestedInterval > 0 ? requestedInterval : 30;
+  if (intervalSeconds < 10) intervalSeconds = 10;
+  if (intervalSeconds > 300) intervalSeconds = 300;
   const lastSum = state.lastSummarizedAt || 0;
   const elapsed = Math.floor((Date.now() - lastSum) / 1000);
   if (lastSum > 0 && elapsed < intervalSeconds) return;

@@ -272,8 +272,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
 
       const parsedInterval = intervalSlider ? parseInt(intervalSlider.value, 10) : 30;
-      const validatedInterval =
+      let validatedInterval =
         Number.isNaN(parsedInterval) || !Number.isFinite(parsedInterval) ? 30 : parsedInterval;
+      if (validatedInterval < 10) validatedInterval = 10;
+      if (validatedInterval > 300) validatedInterval = 300;
 
       const parsedVadThreshold = vadSlider ? parseFloat(vadSlider.value) : 0.012;
       const validatedVadThreshold =
