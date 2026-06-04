@@ -59,6 +59,7 @@ interface QueueEntry<T> {
 }
 
 class ApiTransactionManager {
+  private static instance: ApiTransactionManager | null = null;
   private static readonly MAX_RETRIES = 5;
   private static readonly BASE_DELAY_MS = 1_000;
   private static readonly JITTER_FRACTION = 0.3; // ±30 % of computed delay
@@ -76,35 +77,52 @@ class ApiTransactionManager {
   private paused = false;
 
   constructor() {
-    // Pause the queue while the extension context is offline.
-    self.addEventListener("offline", () => {
-      if (!this.paused) {
-        console.warn("[LateMeet][Queue] Network offline — queue paused");
-        this.paused = true;
-      }
-    });
+    ApiTransactionManager.instance = this;
+    this.paused = typeof navigator !== "undefined" && !navigator.onLine;
 
-    // Resume (and immediately flush) when connectivity returns.
-    self.addEventListener("online", () => {
-      if (this.paused) {
-        console.info("[LateMeet][Queue] Network back online — resuming queue");
-        this.paused = false;
-        this.drain();
-      }
-    });
+    const globalScope = typeof self !== "undefined" ? self : null;
+    if (globalScope) {
+      const g = globalScope as any;
+      if (!g.__apiQueueListenersRegistered) {
+        g.__apiQueueListenersRegistered = true;
 
-    // Re-enqueue any task whose alarm has fired (MV3-safe retry scheduling).
-    chrome.alarms.onAlarm.addListener((alarm) => {
-      const entry = this.retryingTasks.get(alarm.name);
-      if (!entry) {
-        // Not our alarm — ignore.
-        return;
+        globalScope.addEventListener("offline", () => {
+          const inst = ApiTransactionManager.instance;
+          if (inst && !inst.paused) {
+            console.warn("[LateMeet][Queue] Network offline — queue paused");
+            inst.paused = true;
+          }
+        });
+
+        globalScope.addEventListener("online", () => {
+          const inst = ApiTransactionManager.instance;
+          if (inst && inst.paused) {
+            console.info("[LateMeet][Queue] Network back online — resuming queue");
+            inst.paused = false;
+            inst.drain();
+          }
+        });
       }
-      this.retryingTasks.delete(alarm.name);
-      // Place the entry back at the front of the queue so it executes next.
-      this.queue.unshift(entry);
-      this.drain();
-    });
+
+      if (typeof chrome !== "undefined" && chrome.alarms && chrome.alarms.onAlarm) {
+        if (!g.__apiQueueAlarmListenerRegistered) {
+          g.__apiQueueAlarmListenerRegistered = true;
+          chrome.alarms.onAlarm.addListener((alarm) => {
+            const inst = ApiTransactionManager.instance;
+            if (!inst) return;
+            const entry = inst.retryingTasks.get(alarm.name);
+            if (!entry) {
+              // Not our alarm — ignore.
+              return;
+            }
+            inst.retryingTasks.delete(alarm.name);
+            // Place the entry back at the front of the queue so it executes next.
+            inst.queue.unshift(entry);
+            inst.drain();
+          });
+        }
+      }
+    }
   }
 
   /** Enqueue a fetch task and return a Promise that resolves with its result. */
