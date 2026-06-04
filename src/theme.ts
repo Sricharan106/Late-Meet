@@ -33,8 +33,8 @@ export function isValidAccent(value: string): boolean {
   );
 }
 
-function normalizeSettings(raw: unknown): Settings {
-  const candidate = (raw ?? {}) as Partial<Settings>;
+function normalizeSettings(raw: unknown): any {
+  const candidate = (raw ?? {}) as Record<string, any>;
 
   const theme: ThemeMode =
     candidate.theme === "light" || candidate.theme === "dark" || candidate.theme === "system"
@@ -45,9 +45,10 @@ function normalizeSettings(raw: unknown): Settings {
 
   const accent = isValidAccent(accentCandidate) ? accentCandidate : DEFAULT_SETTINGS.accent;
 
-  return { theme, accent };
+  return { ...candidate, theme, accent };
 }
-export async function getSettings(): Promise<Settings> {
+
+export async function getSettings(): Promise<any> {
   const result = await chrome.storage.local.get("settings");
   return normalizeSettings(result.settings);
 }
