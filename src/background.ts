@@ -6,6 +6,7 @@ import {
   deleteSavedMeetingSession,
   discardPendingMeetingSession,
   getSavedMeetingSessions,
+  getSavedMeetingSession,
   isStorageQuotaError,
   persistMeetingSession,
   persistPendingMeetingSession,
@@ -17,6 +18,7 @@ import { createAudioCaptureStopPlan } from "./audioCaptureLifecycle";
 import { normalizeActiveSpeakerName, resolveTranscriptSpeaker } from "./speakerAttribution";
 import { getMeetingIdFromUrl } from "./meetingTabs";
 import { getOpenAiApiKey, getElevenLabsApiKey } from "./utils/credentials";
+import { isMessageFromActiveMeeting } from "./activeMeetingMessages";
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions";
@@ -364,6 +366,7 @@ function snapshot() {
     startTime: state.startTime,
     duration: getDuration(),
     summary: state.summary,
+    summaryItems: state.summaryItems,
     topics: state.topics,
     decisions: state.decisions,
     actionItems: state.actionItems,
@@ -1186,9 +1189,23 @@ async function savePendingSession() {
     await savePendingMeetingSession(chrome.storage.local, session);
   } catch (err) {
     console.error("[LateMeet] Failed to save pending session:", err);
+
     if (isStorageQuotaError(err)) {
+      try {
+        const sessions = await getSavedMeetingSessions(chrome.storage.local);
+        if (sessions.length > 0) {
+          const oldest = sessions[sessions.length - 1];
+          await deleteSavedMeetingSession(chrome.storage.local, oldest.id);
+          console.log("[LateMeet] Evicted oldest session to free quota:", oldest.id);
+          await savePendingMeetingSession(chrome.storage.local, session);
+          return;
+        }
+      } catch (recoveryErr) {
+        console.error("[LateMeet] Quota recovery failed:", recoveryErr);
+      }
+
       console.error(
-        "[LateMeet] Storage quota reached while saving pending session. Keep this extension active and export the session before closing Chrome.",
+        "[LateMeet] Storage quota reached while saving pending session and recovery failed.",
       );
     }
   }
@@ -1454,6 +1471,16 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Fast-path: waveform data is display-only and does not need service worker
+  // processing. Return immediately to avoid unnecessary hydration and state work.
+  if (message?.type === "WAVEFORM_DATA" || message?.type === "OFFSCREEN_LOG") {
+    if (message.type === "OFFSCREEN_LOG" && typeof message.message === "string") {
+      console.log("[LateMeet][offscreen]", message.message);
+    }
+    sendResponse({ success: true });
+    return false;
+  }
+
   (async () => {
     await hydrateState();
     switch (message?.type) {
@@ -1506,12 +1533,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       case "UNEXPECTED_TRACK_END": {
         await stopAudioCapture(message.reason || "Unexpected track end");
-        sendResponse({ success: true });
-        return;
-      }
-
-      case "OFFSCREEN_LOG": {
-        console.log("[LateMeet][offscreen]", message.message);
         sendResponse({ success: true });
         return;
       }
@@ -1570,6 +1591,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case "PARTICIPANTS_UPDATED": {
+        if (
+          !isMessageFromActiveMeeting({
+            senderTabId: sender?.tab?.id,
+            senderUrl: sender?.tab?.url || sender?.url,
+            targetTabId: state.targetTabId,
+            meetingId: state.meetingId,
+          })
+        ) {
+          console.warn("[LateMeet] Ignoring participant update from non-active Meet tab");
+          sendResponse({ success: true, ignored: true });
+          return;
+        }
+
         if (!Array.isArray(message.participants)) {
           sendResponse({ success: false, error: "participants must be an array" });
           return;
@@ -1580,13 +1614,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (incomingSelfName) selfParticipantName = incomingSelfName;
 
         const joiners = detectNewJoiners(message.participants);
-        await maybeWelcomeJoiners(sender?.tab?.id || state.targetTabId || undefined, joiners);
+        await maybeWelcomeJoiners(state.targetTabId || undefined, joiners);
         await broadcastStateUpdate();
         sendResponse({ success: true, joiners });
         return;
       }
 
       case "ACTIVE_SPEAKER_CHANGED": {
+        if (
+          !isMessageFromActiveMeeting({
+            senderTabId: sender?.tab?.id,
+            senderUrl: sender?.tab?.url || sender?.url,
+            targetTabId: state.targetTabId,
+            meetingId: state.meetingId,
+          })
+        ) {
+          console.warn("[LateMeet] Ignoring speaker update from non-active Meet tab");
+          sendResponse({ success: true, ignored: true });
+          return;
+        }
+
         const speaker = normalizeActiveSpeakerName(message.name);
 
         if (!speaker) {
@@ -1617,6 +1664,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "GET_SAVED_SESSIONS": {
         const sessions = await getSavedMeetingSessions(chrome.storage.local);
         sendResponse(sessions);
+        return;
+      }
+
+      case "GET_SAVED_SESSION": {
+        const session =
+          typeof message.sessionId === "string"
+            ? await getSavedMeetingSession(chrome.storage.local, message.sessionId)
+            : null;
+        sendResponse(session);
         return;
       }
 
@@ -1718,8 +1774,21 @@ function createContextMenu() {
   });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
   createContextMenu();
+  try {
+    const vals = await chrome.storage.local.get(["onboardingCompleted"]);
+    if (!vals?.onboardingCompleted) {
+      const url = chrome.runtime.getURL("src/options.html?onboarding=1");
+      try {
+        await chrome.tabs.create({ url });
+      } catch (e) {
+        console.warn("[LateMeet] Could not open onboarding tab on install:", e);
+      }
+    }
+  } catch (e) {
+    console.warn("[LateMeet] onInstalled storage check failed:", e);
+  }
 });
 
 chrome.runtime.onStartup.addListener(() => {
