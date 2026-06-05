@@ -908,29 +908,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         })
         .join("");
 
-      // Wire up export buttons
-      function handleExportClick(btn: HTMLButtonElement) {
-        const sessionId = btn.dataset.sessionId;
-        const session = sessions.find((s: State) => (s as any).id === sessionId);
-        if (session) exportSessionMarkdown(session);
-      }
-
-      container
-        .querySelectorAll<HTMLButtonElement>(".session-export-btn:not(.session-download-btn)")
-        .forEach((btn) => {
-          btn.addEventListener("click", () => handleExportClick(btn));
-        });
-
-      function handleDownloadClick(btn: HTMLButtonElement) {
-        const sessionId = btn.dataset.sessionId;
-        const session = sessions.find((s: State) => (s as any).id === sessionId);
-        if (session) downloadSessionMarkdown(session);
-      }
-
-      container.querySelectorAll<HTMLButtonElement>(".session-download-btn").forEach((btn) => {
-        btn.addEventListener("click", () => handleDownloadClick(btn));
-      });
-
       // Wire up delete buttons
       container.querySelectorAll<HTMLButtonElement>(".session-delete-btn").forEach((btn) => {
         btn.addEventListener("click", async () => {
