@@ -461,6 +461,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     } else {
       if (statusDot) statusDot.classList.remove("active");
       if (statusText) statusText.textContent = "No active meeting";
+      setAudioBtnActive(false);
       if (timerInterval) {
         window.clearInterval(timerInterval);
         timerInterval = null;
@@ -552,7 +553,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const map: Record<string, { width: string; text: string; color: string }> = {
       positive: { width: "85%", text: "Positive 😊", color: "#34D399" },
       negative: { width: "20%", text: "Negative 😟", color: "#F87171" },
-      neutral: { width: "50%", text: "Neutral 😐", color: "#94A3B8" },
+      neutral: { width: "50%", text: "Neutral 😐", color: "var(--text-main)" },
       mixed: { width: "55%", text: "Mixed 🤔", color: "#FBBF24" },
     };
     const normalizedSentiment = (sentiment || "").toLowerCase();
