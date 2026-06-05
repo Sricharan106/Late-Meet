@@ -9,6 +9,7 @@ export const STORAGE_SOFT_LIMIT_BYTES = 8_500_000;
 export type StoredSession = State & {
   id: string;
   savedAt: number;
+  duration?: number;
 };
 
 type StorageArea = Pick<chrome.storage.StorageArea, "get" | "set" | "remove"> & {
@@ -80,7 +81,9 @@ async function pruneSessionsForQuota(
     if (session) pruned.push(session);
   }
 
-  let currentBytes = await getBytesInUse(storage, null);
+  // Measure only session-related keys, not all of chrome.storage.local
+  const sessionKeys = [SAVED_SESSION_INDEX_KEY, ...nextIndex.map((s) => getSavedSessionKey(s.id))];
+  let currentBytes = await getBytesInUse(storage, sessionKeys);
   while (
     currentBytes > 0 &&
     currentBytes + incomingBytes > STORAGE_SOFT_LIMIT_BYTES &&
@@ -158,6 +161,11 @@ export async function persistMeetingSession(
     [SAVED_SESSION_INDEX_KEY]: nextIndex,
   });
 
+  // One-time cleanup: remove legacy sessions key after successful migration
+  if (Array.isArray(values[SAVED_SESSIONS_LEGACY_KEY])) {
+    await storage.remove(SAVED_SESSIONS_LEGACY_KEY);
+  }
+
   return pendingSession;
 }
 
@@ -180,6 +188,22 @@ export async function getSavedMeetingSessions(storage: StorageArea): Promise<Sto
     : [];
 }
 
+export async function getSavedMeetingSession(
+  storage: StorageArea,
+  sessionId: string,
+): Promise<StoredSession | null> {
+  const sessionKey = getSavedSessionKey(sessionId);
+  const values = await storage.get([sessionKey, SAVED_SESSIONS_LEGACY_KEY]);
+  const indexedSession = asStoredSession(values[sessionKey]);
+  if (indexedSession) return indexedSession;
+
+  const legacySessions = Array.isArray(values[SAVED_SESSIONS_LEGACY_KEY])
+    ? (values[SAVED_SESSIONS_LEGACY_KEY].map(asStoredSession).filter(Boolean) as StoredSession[])
+    : [];
+
+  return legacySessions.find((session) => session.id === sessionId) ?? null;
+}
+
 export async function deleteSavedMeetingSession(
   storage: StorageArea,
   sessionId: string,
@@ -199,4 +223,17 @@ export async function deleteSavedMeetingSession(
     [SAVED_SESSION_INDEX_KEY]: indexedSessions.filter((session) => session.id !== sessionId),
     [SAVED_SESSIONS_LEGACY_KEY]: legacySessions,
   });
+}
+
+// Safe local storage quota wrapper
+export function safeLocalStore(key: string, value: any) {
+  try {
+    chrome.storage.local.set({ [key]: value }, () => {
+      if (chrome.runtime.lastError) {
+        console.error("Quota limits check failure:", chrome.runtime.lastError.message);
+      }
+    });
+  } catch (e) {
+    console.error("Storage API exception:", e);
+  }
 }

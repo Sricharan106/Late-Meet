@@ -1,8 +1,27 @@
-import { State, Topic, TranscriptEntry, TimelineEvent, Decision, ActionItem } from "./types";
+import {
+  State,
+  Topic,
+  TranscriptEntry,
+  TimelineEvent,
+  Decision,
+  ActionItem,
+  KeyInsight,
+} from "./types";
 import { initTheme } from "./theme.js";
 import { resolveManualMeetTab } from "./meetingTabs";
+import { startDashboardAudioCapture } from "./dashboardCapture";
 
 initTheme();
+
+/** Securely checks whether a URL belongs to meet.google.com using URL parsing (not substring matching). */
+function isMeetHostname(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    return new URL(url).hostname === "meet.google.com";
+  } catch {
+    return false;
+  }
+}
 
 // ——— Action Item Status Persistence ———
 const actionStatuses = new Map<string, boolean>();
@@ -22,13 +41,17 @@ function buildActionStatusKey(meetingId: string, task: string): string {
 
 function normalizeActionItem(input: unknown): ActionItem | null {
   if (!input || typeof input !== "object") return null;
-  const raw = input as { task?: unknown; owner?: unknown; deadline?: unknown };
+  const raw = input as Partial<ActionItem> & { confidence?: unknown; isSpeculative?: unknown };
   const task = String(raw.task ?? "").trim();
+
   if (!task) return null;
+
   return {
     task,
     owner: String(raw.owner ?? "").trim() || undefined,
     deadline: String(raw.deadline ?? "").trim() || undefined,
+    confidence: typeof raw.confidence === "number" ? raw.confidence : undefined,
+    isSpeculative: typeof raw.isSpeculative === "boolean" ? raw.isSpeculative : undefined,
   } as ActionItem;
 }
 
@@ -58,7 +81,46 @@ async function persistActionStatuses() {
   }
 }
 
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes.actionItemStatuses) {
+    const newVal = changes.actionItemStatuses.newValue;
+    if (newVal && typeof newVal === "object") {
+      for (const [k, v] of Object.entries(newVal)) {
+        actionStatuses.set(k, Boolean(v));
+      }
+
+      const checkboxes = document.querySelectorAll<HTMLInputElement>(".action-checkbox");
+      checkboxes.forEach((cb) => {
+        const meetId = cb.dataset.meetingId || currentMeetingId;
+        const taskText = cb.dataset.task || "";
+        const key = buildActionStatusKey(meetId, taskText);
+        const isDone = actionStatuses.get(key) === true;
+
+        if (cb.checked !== isDone) {
+          cb.checked = isDone;
+          const wrapper = cb.closest(".action-item");
+          const taskDiv = wrapper?.querySelector(".action-task");
+          wrapper?.classList.toggle("action-item--done", isDone);
+          taskDiv?.classList.toggle("action-task--done", isDone);
+        }
+      });
+    }
+  }
+});
+
 document.addEventListener("DOMContentLoaded", async () => {
+  // ——— Transcript Search DOM Elements (Queried early to prevent TDZ) ———
+  const searchInput = document.getElementById("transcript-search-input") as HTMLInputElement | null;
+  const searchCounter = document.getElementById(
+    "transcript-search-counter",
+  ) as HTMLSpanElement | null;
+  const searchPrevBtn = document.getElementById("search-prev") as HTMLButtonElement | null;
+  const searchNextBtn = document.getElementById("search-next") as HTMLButtonElement | null;
+  const searchClearBtn = document.getElementById("search-clear") as HTMLButtonElement | null;
+  const transcriptContainer = document.getElementById(
+    "dash-transcript-list",
+  ) as HTMLDivElement | null;
+
   await loadActionStatuses();
   // ——— Waveform Visualizer ———
   const WAVEFORM_N = 32;
@@ -120,7 +182,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initWaveformCanvas();
 
   // ——— Tab Switching ———
-  const tabs = document.querySelectorAll(".dash-tab");
+  const tabs = document.querySelectorAll(".dash-tabs .dash-tab");
   const panels = document.querySelectorAll(".tab-panel");
   const loadedTabs = new Set<string>(["overview"]);
 
@@ -171,9 +233,15 @@ document.addEventListener("DOMContentLoaded", async () => {
       const tabId = (tab as HTMLElement).dataset.tab;
       if (!tabId) return;
 
-      tabs.forEach((t) => t.classList.remove("active"));
+      tabs.forEach((t) => {
+        t.classList.remove("active");
+        t.setAttribute("aria-selected", "false");
+        t.setAttribute("tabindex", "-1");
+      });
       panels.forEach((p) => p.classList.remove("active"));
       (tab as HTMLElement).classList.add("active");
+      (tab as HTMLElement).setAttribute("aria-selected", "true");
+      (tab as HTMLElement).setAttribute("tabindex", "0");
 
       const panel = document.getElementById(`tab-${tabId}`);
       if (panel) {
@@ -188,11 +256,39 @@ document.addEventListener("DOMContentLoaded", async () => {
           else if (tabId === "decisions") updateDecisions(lastState?.decisions || []);
           else if (tabId === "actions") updateActions(lastState?.actionItems || []);
           else if (tabId === "people")
-            updatePeople(lastState?.participants || [], lastState?.lateJoiners || []);
+            updatePeople(
+              lastState?.participants || [],
+              lastState?.lateJoiners || [],
+              lastState?.meetingUrl || null,
+            );
           else if (tabId === "timeline") updateTimeline(lastState?.timeline || []);
           else if (tabId === "transcript") updateTranscript(lastState?.transcript || []);
-          else if (tabId === "sessions") loadSavedSessions();
+          else if (tabId === "history" || tabId === "sessions") loadMeetingHistory();
         }, 150);
+      }
+    });
+
+    tab.addEventListener("keydown", (e: Event) => {
+      const kbEvent = e as KeyboardEvent;
+      let newIndex = -1;
+      const tabsArray = Array.from(tabs);
+      const index = tabsArray.indexOf(tab);
+
+      if (kbEvent.key === "ArrowRight") {
+        newIndex = (index + 1) % tabsArray.length;
+      } else if (kbEvent.key === "ArrowLeft") {
+        newIndex = (index - 1 + tabsArray.length) % tabsArray.length;
+      } else if (kbEvent.key === "Home") {
+        newIndex = 0;
+      } else if (kbEvent.key === "End") {
+        newIndex = tabsArray.length - 1;
+      }
+
+      if (newIndex !== -1) {
+        kbEvent.preventDefault();
+        const newTab = tabsArray[newIndex] as HTMLElement;
+        newTab.focus();
+        newTab.click();
       }
     });
   });
@@ -223,13 +319,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
     if (message.type === "SESSION_ENDED") {
-      // Reload sessions if on that tab
-      const sessionsTab = document.querySelector('[data-tab="sessions"]');
-      if (sessionsTab?.classList.contains("active")) {
-        loadSavedSessions();
-      } else {
-        loadedTabs.delete("sessions");
-      }
+      // Dynamic load requested by human reviewer
+      loadMeetingHistory();
+      loadedTabs.delete("sessions");
     }
     if (message.type === "WAVEFORM_DATA" && Array.isArray(message.buckets)) {
       drawWaveform(message.buckets);
@@ -242,6 +334,31 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ——— Start Audio Capture (User Gesture via tabCapture) ———
   const audioBtn = document.getElementById("dash-start-audio-btn") as HTMLButtonElement | null;
+
+  function getDashboardMediaStreamId(tabId: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+      chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message || "Unknown tab capture error"));
+          return;
+        }
+
+        resolve(streamId || "");
+      });
+    });
+  }
+
+  async function requestDashboardMicrophonePermission(): Promise<boolean> {
+    try {
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      micStream.getTracks().forEach((t) => t.stop());
+      return true;
+    } catch {
+      console.warn("[Dashboard] Mic permission not granted — waveform will use tab audio only");
+      return false;
+    }
+  }
+
   audioBtn?.addEventListener("click", async () => {
     if (lastState?.audioActive) {
       try {
@@ -259,77 +376,40 @@ document.addEventListener("DOMContentLoaded", async () => {
       audioBtn.disabled = true;
       audioBtn.textContent = "Starting...";
 
-      // Request mic permission from this user-facing page while the gesture is still live.
-      // Chrome grants the permission to the extension origin so the offscreen doc inherits it.
-      try {
-        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        micStream.getTracks().forEach((t) => t.stop());
-      } catch {
-        console.warn("[Dashboard] Mic permission not granted — waveform will use tab audio only");
+      const { meetingId } = await startDashboardAudioCapture({
+        resolveMeetTab: resolveManualMeetTab,
+        getMediaStreamId: getDashboardMediaStreamId,
+        requestMicrophonePermission: requestDashboardMicrophonePermission,
+        startAudioCapture: (payload) =>
+          chrome.runtime.sendMessage({
+            type: "MANUAL_START_AUDIO",
+            ...payload,
+          }),
+      });
+
+      setAudioBtnActive(true);
+      // Start timer immediately
+      startTimer(Date.now());
+      const statusText = document.getElementById("dash-status-text");
+      const statusDot = document.querySelector(".dash-status-dot");
+      if (statusText) statusText.textContent = `Meeting active — ${meetingId || "unknown"}`;
+      if (statusDot) statusDot.classList.add("active");
+    } catch (err) {
+      const e = err as Error;
+      if ((e.message || "").includes("active stream")) {
+        setAudioBtnActive(true);
+        return;
       }
-
-      resolveManualMeetTab()
-        .then(({ tab: meetTab, meetingId, meetingUrl }) => {
-          // --- Get Media Stream ID in foreground (dashboard) to ensure user gesture propagation ---
-          chrome.tabCapture.getMediaStreamId({ targetTabId: meetTab.id }, async (streamId) => {
-            if (chrome.runtime.lastError) {
-              const err = chrome.runtime.lastError.message || "Unknown error";
-              console.error("[Dashboard] getMediaStreamId error:", err);
-              if (err.includes("active stream")) {
-                setAudioBtnActive(true);
-                return;
-              } else {
-                handleDashboardAudioError(
-                  new Error('Capture permission denied. Try clicking "Start Audio" again.'),
-                );
-                return;
-              }
-            }
-
-            if (!streamId) {
-              handleDashboardAudioError(
-                new Error('Capture permission denied. Try clicking "Start Audio" again.'),
-              );
-            }
-
-            try {
-              const response = await chrome.runtime.sendMessage({
-                type: "MANUAL_START_AUDIO",
-                tabId: meetTab.id,
-                meetingId: meetingId,
-                meetingUrl: meetingUrl || meetTab.url || null,
-                streamId: streamId,
-                includeMicrophone: true,
-              });
-
-              if (response && response.success) {
-                setAudioBtnActive(true);
-                // Start timer immediately
-                startTimer(Date.now());
-                const statusText = document.getElementById("dash-status-text");
-                const statusDot = document.querySelector(".dash-status-dot");
-                if (statusText)
-                  statusText.textContent = `Meeting active — ${meetingId || "unknown"}`;
-                if (statusDot) statusDot.classList.add("active");
-              } else {
-                throw new Error(response?.error || "Failed to start audio");
-              }
-            } catch (err: any) {
-              handleDashboardAudioError(err);
-            }
-          });
-        })
-        .catch(handleDashboardAudioError);
-    } catch (err: any) {
-      handleDashboardAudioError(err);
+      handleDashboardAudioError(e);
     }
 
-    function handleDashboardAudioError(err: any) {
-      console.error("[Dashboard] Failed to start audio:", err);
+    function handleDashboardAudioError(err: unknown) {
+      const e = err as Error;
+      console.error("[Dashboard] Failed to start audio:", e);
       if (audioBtn) {
         audioBtn.disabled = false;
         audioBtn.textContent =
-          (err.message || String(err)).length > 30 ? "Error — Retry" : err.message || "Error";
+          (e.message || String(e)).length > 30 ? "Error — Retry" : e.message || "Error";
         setTimeout(() => {
           if (audioBtn) {
             audioBtn.innerHTML =
@@ -356,11 +436,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // ——— Duration Timer ———
-  let timerInterval: number | NodeJS.Timeout | null = null;
+  let timerInterval: number | null = null;
 
   function startTimer(startTime: number) {
     if (timerInterval) return;
-    timerInterval = setInterval(() => {
+    timerInterval = window.setInterval(() => {
       const elapsed = Math.round((Date.now() - startTime) / 1000);
       const timerEl = document.getElementById("dash-timer");
       if (timerEl) timerEl.textContent = formatDuration(elapsed);
@@ -381,15 +461,37 @@ document.addEventListener("DOMContentLoaded", async () => {
     } else {
       if (statusDot) statusDot.classList.remove("active");
       if (statusText) statusText.textContent = "No active meeting";
+      setAudioBtnActive(false);
       if (timerInterval) {
-        clearInterval(timerInterval as any);
+        window.clearInterval(timerInterval);
         timerInterval = null;
       }
     }
 
     // Summary
     const summaryEl = document.getElementById("dash-summary");
-    if (summaryEl) summaryEl.textContent = state.summary || "Waiting for conversation to begin...";
+    if (summaryEl) {
+      if (Array.isArray(state.summaryItems) && state.summaryItems.length > 0) {
+        summaryEl.innerHTML = state.summaryItems
+          .map((item) => {
+            const label = escapeHtml(item.timestampLabel || item.timestamp || "00:00");
+            const timestampChunk = item.chunkId
+              ? `<button type="button" class="timestamp-link" data-chunk-id="${escapeHtml(
+                  item.chunkId,
+                )}" aria-label="Jump to transcript at ${label}">${label}</button>`
+              : `<span class="timestamp-text">${label}</span>`;
+            return `
+              <div class="summary-item">
+                <div class="summary-text">${escapeHtml(item.text || "")}</div>
+                <div class="summary-meta">${timestampChunk}</div>
+              </div>
+            `;
+          })
+          .join("");
+      } else {
+        summaryEl.textContent = state.summary || "Waiting for conversation to begin...";
+      }
+    }
 
     // Current Topic
     const topicEl = document.getElementById("dash-current-topic");
@@ -408,11 +510,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     const peopleCountEl = document.getElementById("dash-people-count");
     if (peopleCountEl) peopleCountEl.textContent = String(state.participants?.length || 0);
 
+    const isMeetTab = isMeetHostname(state.meetingUrl);
+    const lateJoinersCard = document.getElementById("late-joiners-card");
+    if (lateJoinersCard && !isMeetTab) {
+      lateJoinersCard.style.display = "none";
+    }
+
     // Sentiment
     updateSentiment(state.sentiment);
 
     // Key Insights
     updateInsights(state.keyInsights);
+
+    updateUnresolvedDiscussions(state.unresolvedDiscussions);
+    updateContradictions(state.contradictions);
 
     // Topics Tab
     if (loadedTabs.has("topics")) updateTopics(state.topics);
@@ -424,13 +535,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (loadedTabs.has("actions")) updateActions(state.actionItems);
 
     // People Tab
-    if (loadedTabs.has("people")) updatePeople(state.participants, state.lateJoiners);
+    if (loadedTabs.has("people"))
+      updatePeople(state.participants, state.lateJoiners, state.meetingUrl);
 
     // Timeline Tab
     if (loadedTabs.has("timeline")) updateTimeline(state.timeline);
 
     // Transcript Tab
     if (loadedTabs.has("transcript")) updateTranscript(state.transcript);
+    attachTimestampLinkListeners();
   }
 
   // ——— Sentiment ———
@@ -443,7 +556,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       neutral: { width: "50%", text: "Neutral 😐", color: "#94A3B8" },
       mixed: { width: "55%", text: "Mixed 🤔", color: "#FBBF24" },
     };
-    const s = map[sentiment] || map.neutral;
+    const normalizedSentiment = (sentiment || "").toLowerCase();
+    const s = map[normalizedSentiment] || map.neutral;
     if (fill) fill.style.width = s.width;
     if (label) {
       label.textContent = s.text;
@@ -452,7 +566,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // ——— Key Insights ———
-  function updateInsights(insights: string[]) {
+  function updateInsights(insights: any[]) {
     const list = document.getElementById("dash-insights-list");
     if (!list) return;
     if (!insights || insights.length === 0) {
@@ -460,7 +574,55 @@ document.addEventListener("DOMContentLoaded", async () => {
         '<li class="empty-msg">Insights will appear as the conversation progresses</li>';
       return;
     }
-    list.innerHTML = insights.map((i) => `<li>${escapeHtml(i || "")}</li>`).join("");
+    list.innerHTML = insights
+      .filter((i) => i != null)
+      .map((i) => {
+        const text = typeof i === "string" ? i : i.text || "";
+        const rawScore =
+          typeof i === "object" && i !== null
+            ? (i as { confidenceScore?: unknown }).confidenceScore
+            : undefined;
+        const parsedScore = typeof rawScore === "number" ? rawScore : Number(rawScore);
+        const safeScore = Number.isFinite(parsedScore)
+          ? Math.max(0, Math.min(100, parsedScore))
+          : null;
+        const score =
+          safeScore !== null
+            ? ` <span style="font-size: 11px; color: #9ca3af;">(Conf: ${safeScore}%)</span>`
+            : "";
+        return `<li>${escapeHtml(text)}${score}</li>`;
+      })
+      .join("");
+  }
+
+  function updateUnresolvedDiscussions(discussions: string[]) {
+    const list = document.getElementById("dash-unresolved-list");
+    if (!list) return;
+    if (!discussions || discussions.length === 0) {
+      list.innerHTML = '<li class="empty-msg">No unresolved discussions yet</li>';
+      return;
+    }
+    list.innerHTML = discussions.map((d) => `<li>${escapeHtml(d || "")}</li>`).join("");
+  }
+
+  function updateContradictions(contradictions: any[]) {
+    const list = document.getElementById("dash-contradictions-list");
+    if (!list) return;
+    if (!contradictions || contradictions.length === 0) {
+      list.innerHTML = '<li class="empty-msg">No contradictions detected</li>';
+      return;
+    }
+    list.innerHTML = contradictions
+      .filter((c) => c != null)
+      .map((c) => {
+        const issue = typeof c === "string" ? c : c.issue || "";
+        const persists =
+          typeof c === "object" && c.persists
+            ? ` <span style="font-size: 11px; background: #FEE2E2; color: #DC2626; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">Persists</span>`
+            : "";
+        return `<li>${escapeHtml(issue)}${persists}</li>`;
+      })
+      .join("");
   }
 
   // ——— Topics ———
@@ -496,14 +658,23 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
     container.innerHTML = decisions
-      .map(
-        (d) => `
+      .map((d) => {
+        const label = escapeHtml(d.timestampLabel || d.timestamp || "00:00");
+        const timestampChunk = d.chunkId
+          ? `<button type="button" class="timestamp-link" data-chunk-id="${escapeHtml(
+              d.chunkId,
+            )}" aria-label="Jump to transcript at ${label}">${label}</button>`
+          : d.timestamp
+            ? ` <span class="timestamp-text">${escapeHtml(d.timestamp)}</span>`
+            : "";
+
+        return `
       <div class="decision-item">
-        <div class="decision-text">${escapeHtml(d.text || "")}</div>
-        <div class="decision-meta">${d.by ? `By ${escapeHtml(d.by)}` : ""} ${d.timestamp ? `• ${escapeHtml(d.timestamp)}` : ""}</div>
+        <div class="decision-text">${escapeHtml(d.text || "")} ${d.classification === "tentative" ? '<span style="font-size: 11px; background: #FEF3C7; color: #D97706; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">Tentative</span>' : ""}</div>
+        <div class="decision-meta">${d.by ? `By ${escapeHtml(d.by)}` : ""}${timestampChunk ? ` • ${timestampChunk}` : ""}</div>
       </div>
-    `,
-      )
+    `;
+      })
       .join("");
   }
 
@@ -546,6 +717,20 @@ document.addEventListener("DOMContentLoaded", async () => {
       const taskDiv = document.createElement("div");
       taskDiv.className = "action-task" + (done ? " action-task--done" : "");
       taskDiv.textContent = task;
+      if (a.isSpeculative) {
+        const specSpan = document.createElement("span");
+        specSpan.style.cssText =
+          "font-size: 11px; background: #FEE2E2; color: #DC2626; padding: 2px 6px; border-radius: 4px; margin-left: 6px;";
+        specSpan.textContent = "Speculative";
+        taskDiv.appendChild(specSpan);
+      }
+      if (a.confidence && a.confidence !== "high") {
+        const confSpan = document.createElement("span");
+        confSpan.style.cssText =
+          "font-size: 11px; background: #F3F4F6; color: #6B7280; padding: 2px 6px; border-radius: 4px; margin-left: 6px;";
+        confSpan.textContent = `Conf: ${a.confidence}`;
+        taskDiv.appendChild(confSpan);
+      }
       label.appendChild(taskDiv);
 
       if (owner) {
@@ -562,6 +747,23 @@ document.addEventListener("DOMContentLoaded", async () => {
         deadlineDiv.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" style="margin-right:2px"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"></rect><line x1="16" x2="16" y1="2" y2="6"></line><line x1="8" x2="8" y1="2" y2="6"></line><line x1="3" x2="21" y1="10" y2="10"></line></svg>`;
         deadlineDiv.appendChild(document.createTextNode(deadline));
         label.appendChild(deadlineDiv);
+      }
+
+      const timestampLabel = a.timestampLabel || a.timestamp;
+      if (timestampLabel) {
+        const timestampButton = document.createElement("button");
+        timestampButton.type = "button";
+        timestampButton.className = "timestamp-link";
+        timestampButton.textContent = timestampLabel;
+        timestampButton.setAttribute("aria-label", `Jump to transcript at ${timestampLabel}`);
+        if (a.chunkId) {
+          timestampButton.dataset.chunkId = a.chunkId;
+          timestampButton.dataset.hasListener = "true";
+        } else {
+          timestampButton.disabled = true;
+          timestampButton.classList.add("timestamp-text");
+        }
+        label.appendChild(timestampButton);
       }
 
       checkbox.addEventListener("change", () => {
@@ -582,7 +784,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // ——— People ———
-  function updatePeople(participants: string[], lateJoiners: string[]) {
+  function updatePeople(participants: string[], lateJoiners: string[], meetingUrl: string | null) {
     const container = document.getElementById("dash-participants-list");
     if (!container) return;
     if (!participants || participants.length === 0) {
@@ -590,6 +792,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
+    const isMeetSession = isMeetHostname(meetingUrl);
     container.innerHTML = participants
       .map((name) => {
         const isLate = lateJoiners?.includes(name);
@@ -619,7 +822,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Late joiner section
     const lateCard = document.getElementById("late-joiners-card");
     const lateList = document.getElementById("dash-late-joiners");
-    if (lateJoiners && lateJoiners.length > 0) {
+    // Keep the non-Meet guard in the updatePeople path too.
+    // Only show late-joiners card if this is a Meet session AND there are late joiners.
+    const showLateJoiners = isMeetSession && lateJoiners && lateJoiners.length > 0;
+    if (showLateJoiners) {
       if (lateCard) lateCard.style.display = "block";
       if (lateList) {
         lateList.innerHTML = lateJoiners
@@ -703,59 +909,127 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // ——— Live Transcript ———
+  let renderedTranscriptCount = 0;
+
+  function createTranscriptEntryHTML(entry: TranscriptEntry): string {
+    const timeStr = escapeHtml(entry.timestampLabel || formatDuration(entry.timestamp || 0));
+    const speaker = escapeHtml(entry.speaker || "Unknown");
+    const initials = speaker
+      .split(" ")
+      .filter(Boolean)
+      .map((w) => w[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+    const isAudio = (entry.speaker || "") === "Audio";
+    const text = escapeHtml(entry.text || "");
+    const chunkId = entry.id ? `transcript-${escapeHtml(entry.id)}` : "";
+
+    return `
+      <div id="${chunkId}" class="transcript-entry ${isAudio ? "audio-source" : ""}">
+        <div class="transcript-time">${timeStr}</div>
+        <div class="transcript-avatar">${isAudio ? "🎙" : initials}</div>
+        <div class="transcript-body">
+          <div class="transcript-speaker">${speaker}</div>
+          <div class="transcript-text">${text}</div>
+        </div>
+      </div>
+    `;
+  }
+
   function updateTranscript(transcript: TranscriptEntry[]) {
-    const container = document.getElementById("dash-transcript-list");
-    if (!container) return;
+    if (!transcriptContainer) return;
+
     if (!transcript || transcript.length === 0) {
-      container.innerHTML =
+      transcriptContainer.innerHTML =
         '<div class="empty-msg">No transcript yet. Start audio to begin capturing speech.</div>';
+      renderedTranscriptCount = 0;
+      resetTranscriptSearchState();
       return;
     }
 
-    const startTime = transcript[0]?.timestamp || Date.now();
+    // If the transcript shrunk (e.g., session reset), do a full re-render
+    if (transcript.length < renderedTranscriptCount) {
+      renderedTranscriptCount = 0;
+      transcriptContainer.innerHTML = "";
+    }
 
-    container.innerHTML = transcript
-      .map((entry) => {
-        const timestamp = entry.timestamp || Date.now();
-        const elapsed = Math.round((timestamp - startTime) / 1000);
-        const timeStr = formatDuration(elapsed);
-        const speaker = escapeHtml(entry.speaker || "Unknown");
-        const initials = speaker
-          .split(" ")
-          .map((w) => w[0])
-          .join("")
-          .toUpperCase()
-          .slice(0, 2);
-        const isAudio = (entry.speaker || "") === "Audio";
-        const text = escapeHtml(entry.text || "");
+    // Only render new entries that haven't been rendered yet
+    if (transcript.length > renderedTranscriptCount) {
+      // Remove empty message if present
+      const emptyMsg = transcriptContainer.querySelector(".empty-msg");
+      if (emptyMsg) emptyMsg.remove();
 
-        return `
-        <div class="transcript-entry ${isAudio ? "audio-source" : ""}">
-          <div class="transcript-time">${timeStr}</div>
-          <div class="transcript-avatar">${isAudio ? "🎙" : initials}</div>
-          <div class="transcript-body">
-            <div class="transcript-speaker">${speaker}</div>
-            <div class="transcript-text">${text}</div>
-          </div>
-        </div>
-      `;
-      })
-      .join("");
+      const newEntries = transcript.slice(renderedTranscriptCount);
+      const fragment = document.createDocumentFragment();
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = newEntries.map((e) => createTranscriptEntryHTML(e)).join("");
+      while (wrapper.firstChild) {
+        fragment.appendChild(wrapper.firstChild);
+      }
+      transcriptContainer.appendChild(fragment);
+      renderedTranscriptCount = transcript.length;
 
-    // Auto-scroll to bottom
-    container.scrollTop = container.scrollHeight;
+      if (searchInput?.value.trim()) {
+        executeTranscriptSearch(true);
+      } else {
+        // Auto-scroll only if user is near the bottom
+        const isNearBottom =
+          transcriptContainer.scrollHeight - transcriptContainer.scrollTop <=
+          transcriptContainer.clientHeight + 80;
+        if (isNearBottom) {
+          transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+        }
+        updateTranscriptSearchControls();
+      }
+    }
   }
 
-  // ——— Export Helpers ———
+  function navigateToTranscriptChunk(chunkId: string) {
+    const transcriptEl = document.getElementById(`transcript-${chunkId}`);
+    if (!transcriptEl) return;
+    transcriptEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    highlightTranscriptChunk(transcriptEl);
+  }
+
+  function highlightTranscriptChunk(element: HTMLElement) {
+    element.classList.add("transcript-highlight");
+    window.setTimeout(() => {
+      element.classList.remove("transcript-highlight");
+    }, 4000);
+  }
+
+  function attachTimestampLinkListeners() {
+    document.querySelectorAll<HTMLButtonElement>(".timestamp-link").forEach((button) => {
+      const chunkId = button.dataset.chunkId;
+      if (!chunkId) return;
+      if (button.dataset.hasListener) return;
+      button.addEventListener("click", () => navigateToTranscriptChunk(chunkId));
+      button.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          navigateToTranscriptChunk(chunkId);
+        }
+      });
+      button.dataset.hasListener = "true";
+    });
+  }
+
+  // ——— Unified Export Helper (Handles both Live & History) ———
   function generateMarkdown(state: State): string {
-    const date = new Date().toLocaleDateString("en-US", {
+    const dateVal = state.savedAt || state.startTime || Date.now();
+    const date = new Date(dateVal).toLocaleDateString("en-US", {
       year: "numeric",
       month: "long",
       day: "numeric",
     });
+
     let md = `# Meeting Summary — ${date}\n\n`;
     md += `**Meeting ID:** ${state.meetingId || "N/A"}\n`;
-    md += `**Duration:** ${formatDuration(state.duration || 0)}\n`;
+
+    // Safely extract duration even if the type strictness misses it
+    const duration = (state as State & { duration?: number }).duration || 0;
+    md += `**Duration:** ${formatDuration(duration)}\n`;
     md += `**Sentiment:** ${state.sentiment || "neutral"}\n\n`;
 
     md += `## Attendees\n`;
@@ -770,10 +1044,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     md += `## Action Items\n`;
     if (state.actionItems?.length) {
+      const sessionMeetingId = state.meetingId || "unknown";
       state.actionItems.forEach((a: ActionItem) => {
         const task = resolveActionKey(a);
         if (!task) return;
-        const statusKey = buildActionStatusKey(currentMeetingId, task);
+        const statusKey = buildActionStatusKey(sessionMeetingId, task);
         const done = actionStatuses.get(statusKey) === true;
         md += done ? `- [x] ${task}` : `- [ ] ${task}`;
         if (a.owner) md += ` — ${a.owner}`;
@@ -807,13 +1082,102 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     md += `## Key Insights\n`;
     if (state.keyInsights?.length) {
-      state.keyInsights.forEach((i: string) => (md += `- ${i}\n`));
+      state.keyInsights
+        .filter((i) => i != null)
+        .forEach((insight: KeyInsight | string | null | undefined) => {
+          const text = typeof insight === "string" ? insight : insight?.text || "";
+
+          if (text) {
+            md += `- ${text}\n`;
+          }
+        });
       md += "\n";
     } else {
       md += `_No insights available_\n\n`;
     }
 
     return md;
+  }
+
+  function generatePlainText(state: State): string {
+    const dateVal = state.savedAt || state.startTime || Date.now();
+    const date = new Date(dateVal).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+    const duration = (state as State & { duration?: number }).duration || 0;
+    let txt = `Meeting Summary — ${date}\n\n`;
+    txt += `Meeting ID: ${state.meetingId || "N/A"}\n`;
+    txt += `Duration: ${formatDuration(duration)}\n`;
+    txt += `Sentiment: ${state.sentiment || "neutral"}\n\n`;
+
+    txt += `Attendees\n`;
+    if (state.participants?.length) {
+      txt += state.participants.map((p) => `  • ${p}`).join("\n") + "\n\n";
+    } else {
+      txt += `  (No participants detected)\n\n`;
+    }
+
+    txt += `Summary\n`;
+    txt += `  ${state.summary || "(No summary available)"}\n\n`;
+
+    txt += `Action Items\n`;
+    if (state.actionItems?.length) {
+      const sessionMeetingId = state.meetingId || "unknown";
+      state.actionItems.forEach((a: ActionItem) => {
+        const task = resolveActionKey(a);
+        if (!task) return;
+        const statusKey = buildActionStatusKey(sessionMeetingId, task);
+        const done = actionStatuses.get(statusKey) === true;
+        txt += done ? `  [done] ${task}` : `  [ ] ${task}`;
+        if (a.owner) txt += ` — ${a.owner}`;
+        if (a.deadline) txt += ` (due: ${a.deadline})`;
+        txt += "\n";
+      });
+      txt += "\n";
+    } else {
+      txt += `  (No action items)\n\n`;
+    }
+
+    txt += `Key Decisions\n`;
+    if (state.decisions?.length) {
+      state.decisions.forEach((d: Decision) => {
+        const byStr = d.by ? " — " + d.by : "";
+        txt += `  • ${d.text}${byStr}\n`;
+      });
+      txt += "\n";
+    } else {
+      txt += `  (No decisions recorded)\n\n`;
+    }
+
+    txt += `Topics Covered\n`;
+    if (state.topics?.length) {
+      state.topics.forEach((t: Topic) => {
+        txt += `  • ${t.name} (${t.status})\n`;
+      });
+      txt += "\n";
+    } else {
+      txt += `  (No topics detected)\n\n`;
+    }
+
+    txt += `Key Insights\n`;
+    if (state.keyInsights?.length) {
+      state.keyInsights
+        .filter((i) => i != null)
+        .forEach((insight: KeyInsight | string | null | undefined) => {
+          const text = typeof insight === "string" ? insight : insight?.text || "";
+          if (text) {
+            txt += `  • ${text}\n`;
+          }
+        });
+      txt += "\n";
+    } else {
+      txt += `  (No insights available)\n\n`;
+    }
+
+    return txt;
   }
 
   let exportToastTimer: number | null = null;
@@ -846,25 +1210,78 @@ document.addEventListener("DOMContentLoaded", async () => {
   const exportBtn = document.getElementById("export-btn") as HTMLButtonElement;
   const exportDropdown = document.getElementById("export-dropdown") as HTMLDivElement;
 
+  function openExportDropdown() {
+    exportDropdown.removeAttribute("hidden");
+    exportBtn.setAttribute("aria-expanded", "true");
+    const firstItem = exportDropdown.querySelector('[role="menuitem"]') as HTMLElement | null;
+    firstItem?.focus();
+  }
+
+  function closeExportDropdown(returnFocus = true) {
+    exportDropdown.setAttribute("hidden", "");
+    exportBtn.setAttribute("aria-expanded", "false");
+    if (returnFocus) exportBtn.focus();
+  }
+
   exportBtn?.addEventListener("click", () => {
     const isHidden = exportDropdown.hasAttribute("hidden");
     if (isHidden) {
-      exportDropdown.removeAttribute("hidden");
-      exportBtn.setAttribute("aria-expanded", "true");
+      openExportDropdown();
     } else {
-      exportDropdown.setAttribute("hidden", "");
-      exportBtn.setAttribute("aria-expanded", "false");
+      closeExportDropdown(false);
+    }
+  });
+
+  exportBtn?.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+      if (exportDropdown.hasAttribute("hidden")) {
+        e.preventDefault();
+        openExportDropdown();
+      }
+    }
+  });
+
+  exportDropdown?.addEventListener("keydown", (e: KeyboardEvent) => {
+    const items = Array.from(exportDropdown.querySelectorAll('[role="menuitem"]')) as HTMLElement[];
+    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
+
+    switch (e.key) {
+      case "Escape":
+        e.preventDefault();
+        closeExportDropdown();
+        break;
+      case "ArrowDown":
+        e.preventDefault();
+        items[(currentIndex + 1) % items.length]?.focus();
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        items[(currentIndex - 1 + items.length) % items.length]?.focus();
+        break;
+      case "Home":
+        e.preventDefault();
+        items[0]?.focus();
+        break;
+      case "End":
+        e.preventDefault();
+        items.at(-1)?.focus();
+        break;
+      case "Tab":
+        closeExportDropdown(false);
+        break;
+      default:
+        break;
     }
   });
 
   document.addEventListener("click", (e: MouseEvent) => {
     const wrapper = document.getElementById("export-wrapper");
     if (wrapper && !wrapper.contains(e.target as Node)) {
-      exportDropdown?.setAttribute("hidden", "");
-      exportBtn?.setAttribute("aria-expanded", "false");
+      closeExportDropdown(false);
     }
   });
 
+  // --- MD EXPORT (LIVE DASHBOARD) ---
   document.getElementById("export-md-btn")?.addEventListener("click", async () => {
     try {
       const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
@@ -874,7 +1291,26 @@ document.addEventListener("DOMContentLoaded", async () => {
       downloadFile(markdown, filename, "text/markdown");
       showToast("Downloaded as .md file", "success");
     } catch (err) {
-      showToast("Failed to export: " + (err instanceof Error ? err.message : String(err)), "error");
+      const e = err as Error;
+      showToast("Failed to export: " + (e.message || String(e)), "error");
+    } finally {
+      exportDropdown?.setAttribute("hidden", "");
+      exportBtn?.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  // --- TXT EXPORT (LIVE DASHBOARD) ---
+  document.getElementById("export-txt-btn")?.addEventListener("click", async () => {
+    try {
+      const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+      if (!state) throw new Error("No meeting data available");
+      const textContent = generatePlainText(state);
+      const filename = `meeting-summary-${new Date().toISOString().slice(0, 10)}.txt`;
+      downloadFile(textContent, filename, "text/plain");
+      showToast("Downloaded as .txt file", "success");
+    } catch (err) {
+      const e = err as Error;
+      showToast("Failed to export: " + (e.message || String(e)), "error");
     } finally {
       exportDropdown?.setAttribute("hidden", "");
       exportBtn?.setAttribute("aria-expanded", "false");
@@ -920,7 +1356,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const sessionData = {
         exportedAt: new Date().toISOString(),
         meetingId: state.meetingId || "unknown",
-        duration: state.duration || 0,
+        duration: (state as State & { duration?: number }).duration || 0,
         sentiment: state.sentiment || "neutral",
         summary: state.summary || "",
         participants: state.participants || [],
@@ -935,7 +1371,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       downloadFile(JSON.stringify(sessionData, null, 2), filename, "application/json");
       showToast("Downloaded as .json backup", "success");
     } catch (err) {
-      showToast("Failed to export: " + (err instanceof Error ? err.message : String(err)), "error");
+      const e = err as Error;
+      showToast("Failed to export: " + (e.message || String(e)), "error");
     } finally {
       exportDropdown?.setAttribute("hidden", "");
       exportBtn?.setAttribute("aria-expanded", "false");
@@ -950,7 +1387,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function sanitizeTopicStatus(status: string) {
-    return status === "completed" ? "completed" : "active";
+    if (status === "completed") return "completed";
+    if (status === "unresolved") return "unresolved";
+    return "active";
   }
 
   function formatDuration(seconds: number) {
@@ -960,25 +1399,27 @@ document.addEventListener("DOMContentLoaded", async () => {
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
-  // ——— Saved Sessions Tab ———
-  async function loadSavedSessions() {
+  // ——— Meeting History Tab ———
+  let sessionToDelete: string | null = null;
+
+  async function loadMeetingHistory() {
     try {
       const sessions: State[] = await chrome.runtime.sendMessage({ type: "GET_SAVED_SESSIONS" });
-      const container = document.getElementById("dash-sessions-list");
+      const container = document.getElementById("dash-history-list");
       if (!container) return;
       if (!sessions || sessions.length === 0) {
         container.innerHTML =
-          '<div class="empty-msg">No saved sessions yet. Sessions are saved when you end a meeting and click "Save".</div>';
+          '<div class="empty-msg">No history exists yet. Sessions are saved when you end a meeting and click "Save".</div>';
         return;
       }
 
       container.innerHTML = sessions
         .map((s: State) => {
-          const date = new Date((s as any).savedAt || s.startTime || Date.now()).toLocaleDateString(
+          const date = new Date(s.savedAt || s.startTime || Date.now()).toLocaleDateString(
             "en-US",
             { month: "short", day: "numeric", year: "numeric" },
           );
-          const time = new Date((s as any).savedAt || s.startTime || Date.now()).toLocaleTimeString(
+          const time = new Date(s.savedAt || s.startTime || Date.now()).toLocaleTimeString(
             "en-US",
             { hour: "2-digit", minute: "2-digit" },
           );
@@ -991,13 +1432,13 @@ document.addEventListener("DOMContentLoaded", async () => {
             <div class="session-item-header">
               <div>
                 <div class="session-item-date">${escapeHtml(date)} at ${escapeHtml(time)}</div>
-                <div class="session-item-id">${escapeHtml(s.meetingId || "Unknown Meeting")}</div>
+                <div class="session-item-id" title="${escapeHtml(s.meetingUrl || "")}">${escapeHtml(s.meetingUrl || s.meetingId || "Unknown Meeting")}</div>
               </div>
               <div class="session-item-meta">
-                <span>${formatDuration(s.duration || 0)}</span>
+                <span>${formatDuration((s as State & { duration?: number }).duration || 0)}</span>
               </div>
             </div>
-            <div class="session-item-summary">${escapeHtml(s.summary || "No summary available")}</div>
+            <div class="session-item-summary" style="cursor: pointer;" title="Click to expand/collapse summary">${escapeHtml(s.summary || "No summary available")}</div>
             <div class="session-item-stats">
               <span>${topicCount} topics</span>
               <span>${decisionCount} decisions</span>
@@ -1026,75 +1467,83 @@ document.addEventListener("DOMContentLoaded", async () => {
       container
         .querySelectorAll<HTMLButtonElement>(".session-export-btn:not(.session-download-btn)")
         .forEach((btn) => {
-          btn.addEventListener("click", () => {
+          btn.addEventListener("click", async () => {
             const sessionId = btn.dataset.sessionId;
-            const session = sessions.find((s: State) => (s as any).id === sessionId);
+            const session = sessionId ? await loadFullSavedSession(sessionId) : null;
             if (session) exportSessionMarkdown(session);
           });
         });
 
       container.querySelectorAll<HTMLButtonElement>(".session-download-btn").forEach((btn) => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", async () => {
           const sessionId = btn.dataset.sessionId;
-          const session = sessions.find((s: State) => (s as any).id === sessionId);
+          const session = sessionId ? await loadFullSavedSession(sessionId) : null;
           if (session) downloadSessionMarkdown(session);
         });
       });
 
       // Wire up delete buttons
       container.querySelectorAll<HTMLButtonElement>(".session-delete-btn").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const sessionId = btn.dataset.sessionId;
-          if (sessionId) {
-            await chrome.runtime.sendMessage({ type: "DELETE_SAVED_SESSION", sessionId });
-            loadSavedSessions();
+        btn.addEventListener("click", () => {
+          sessionToDelete = btn.dataset.sessionId || null;
+          if (sessionToDelete) {
+            document.getElementById("delete-confirm-modal")?.classList.remove("hidden");
           }
         });
       });
+
+      // Wire up summary expand/collapse
+      container.querySelectorAll<HTMLDivElement>(".session-item-summary").forEach((summary) => {
+        summary.addEventListener("click", () => {
+          const item = summary.closest(".session-item");
+          if (item) item.classList.toggle("expanded");
+        });
+      });
     } catch (err) {
-      console.error("[Dashboard] Failed to load sessions:", err);
+      console.error("[Dashboard] Failed to load history:", err);
     }
   }
 
-  function generateSessionMarkdown(session: State): string {
-    let md = `# Meeting Summary\n\n`;
-    md += `**Date:** ${new Date((session as any).savedAt || session.startTime).toLocaleString()}\n`;
-    md += `**Duration:** ${formatDuration(session.duration || 0)}\n`;
-    md += `**Meeting ID:** ${session.meetingId || "N/A"}\n`;
-    md += `**Participants:** ${session.participants?.join(", ") || "N/A"}\n\n`;
-    md += `## Summary\n${session.summary || "N/A"}\n\n`;
-
-    if (session.topics?.length) {
-      md += `## Topics\n`;
-      session.topics.forEach((t: Topic) => (md += `- ${t.name} (${t.status})\n`));
-      md += "\n";
-    }
-    if (session.decisions?.length) {
-      md += `## Decisions\n`;
-      session.decisions.forEach(
-        (d: Decision) => (md += `- ${d.text}${d.by ? ` — ${d.by}` : ""}\n`),
-      );
-      md += "\n";
-    }
-    if (session.actionItems?.length) {
-      const sessionMeetingId = session.meetingId || "unknown";
-      md += `## Action Items\n`;
-      session.actionItems.forEach((a: ActionItem) => {
-        const task = resolveActionKey(a);
-        if (!task) return;
-        const statusKey = buildActionStatusKey(sessionMeetingId, task);
-        const done = actionStatuses.get(statusKey) === true;
-        md += done ? `- [x] ${task}` : `- [ ] ${task}`;
-        if (a.owner) md += ` → ${a.owner}`;
-        if (a.deadline) md += ` (due: ${a.deadline})`;
-        md += "\n";
+  // Modal logic
+  document.getElementById("cancel-delete-btn")?.addEventListener("click", () => {
+    sessionToDelete = null;
+    document.getElementById("delete-confirm-modal")?.classList.add("hidden");
+  });
+  document.getElementById("confirm-delete-btn")?.addEventListener("click", async () => {
+    if (sessionToDelete) {
+      await chrome.runtime.sendMessage({
+        type: "DELETE_SAVED_SESSION",
+        sessionId: sessionToDelete,
       });
+      sessionToDelete = null;
+      document.getElementById("delete-confirm-modal")?.classList.add("hidden");
+      loadMeetingHistory();
     }
-    return md;
+  });
+
+  // ——— HISTORY EXPORT ACTIONS (Now perfectly unified with the dynamic generator!) ———
+  async function loadFullSavedSession(sessionId: string): Promise<State | null> {
+    try {
+      const session: State | null = await chrome.runtime.sendMessage({
+        type: "GET_SAVED_SESSION",
+        sessionId,
+      });
+
+      if (!session) {
+        showToast("Saved session data could not be found", "error");
+        return null;
+      }
+
+      return session;
+    } catch (err) {
+      const e = err as Error;
+      showToast("Failed to load saved session: " + (e.message || String(e)), "error");
+      return null;
+    }
   }
 
   function exportSessionMarkdown(session: State) {
-    const md = generateSessionMarkdown(session);
+    const md = generateMarkdown(session);
 
     navigator.clipboard
       .writeText(md)
@@ -1102,20 +1551,287 @@ document.addEventListener("DOMContentLoaded", async () => {
         showToast("Session exported to clipboard", "success");
       })
       .catch((err) => {
-        showToast(
-          "Failed to export session: " + (err instanceof Error ? err.message : String(err)),
-          "error",
-        );
+        const e = err as Error;
+        showToast("Failed to export session: " + (e.message || String(e)), "error");
       });
   }
 
   function downloadSessionMarkdown(session: State) {
-    const md = generateSessionMarkdown(session);
+    const md = generateMarkdown(session);
 
-    const filename = `meeting-summary-${new Date((session as any).savedAt || session.startTime).toISOString().slice(0, 10)}.md`;
+    const dateVal = session.savedAt || session.startTime || Date.now();
+    const filename = `meeting-summary-${new Date(dateVal).toISOString().slice(0, 10)}.md`;
     downloadFile(md, filename, "text/markdown");
     showToast("Downloaded as .md file", "success");
   }
 
-  // Session loading is handled in the tab click listener now
+  // ——— Transcript Search ———
+  let searchMatches: HTMLElement[] = [];
+  let currentMatchIndex = -1;
+  let searchDebounceTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+
+  function resetTranscriptSearchState(): void {
+    searchMatches = [];
+    currentMatchIndex = -1;
+
+    if (searchCounter) {
+      searchCounter.textContent = "0/0";
+    }
+
+    if (searchPrevBtn) {
+      searchPrevBtn.disabled = true;
+    }
+
+    if (searchNextBtn) {
+      searchNextBtn.disabled = true;
+    }
+
+    if (searchClearBtn) {
+      searchClearBtn.disabled = !searchInput?.value.trim();
+      searchClearBtn.classList.toggle("visible", Boolean(searchInput?.value.trim()));
+    }
+  }
+
+  function unwrapTranscriptSearchMarks(): void {
+    if (!transcriptContainer) return;
+
+    transcriptContainer.querySelectorAll("mark.search-match").forEach((mark) => {
+      const parent = mark.parentNode;
+
+      if (!parent) return;
+
+      parent.replaceChild(document.createTextNode(mark.textContent || ""), mark);
+      parent.normalize();
+    });
+  }
+
+  function updateTranscriptSearchControls(): void {
+    const hasQuery = Boolean(searchInput?.value.trim());
+    const hasMatches = searchMatches.length > 0;
+
+    if (searchCounter) {
+      searchCounter.textContent = hasMatches
+        ? `${currentMatchIndex + 1}/${searchMatches.length}`
+        : "0/0";
+    }
+
+    if (searchPrevBtn) {
+      searchPrevBtn.disabled = !hasMatches;
+    }
+
+    if (searchNextBtn) {
+      searchNextBtn.disabled = !hasMatches;
+    }
+
+    if (searchClearBtn) {
+      searchClearBtn.disabled = !hasQuery;
+      searchClearBtn.classList.toggle("visible", hasQuery);
+    }
+  }
+
+  function updateActiveSearchMatch(scrollToMatch = true): void {
+    searchMatches.forEach((match, index) => {
+      match.classList.toggle("active", index === currentMatchIndex);
+    });
+
+    updateTranscriptSearchControls();
+
+    if (!scrollToMatch) return;
+
+    const activeMatch = searchMatches[currentMatchIndex];
+
+    activeMatch?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+      inline: "nearest",
+    });
+  }
+
+  function executeTranscriptSearch(preserveIndex = false): void {
+    if (
+      !searchInput ||
+      !searchCounter ||
+      !searchClearBtn ||
+      !searchPrevBtn ||
+      !searchNextBtn ||
+      !transcriptContainer
+    ) {
+      return;
+    }
+
+    const query = searchInput.value.trim();
+    const normalizedQuery = query.toLowerCase();
+    const previousIndex = currentMatchIndex;
+
+    unwrapTranscriptSearchMarks();
+
+    searchMatches = [];
+    currentMatchIndex = -1;
+
+    if (!normalizedQuery) {
+      updateTranscriptSearchControls();
+      return;
+    }
+
+    const textNodes: Text[] = [];
+    const walker = document.createTreeWalker(transcriptContainer, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parentElement = node.parentElement;
+
+        if (!parentElement) {
+          return NodeFilter.FILTER_REJECT;
+        }
+
+        if (parentElement.closest(".empty-msg")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+
+        if (!parentElement.closest(".transcript-text")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+
+        if (!node.nodeValue?.trim()) {
+          return NodeFilter.FILTER_REJECT;
+        }
+
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    let node = walker.nextNode();
+
+    while (node) {
+      textNodes.push(node as Text);
+      node = walker.nextNode();
+    }
+
+    textNodes.forEach((textNode) => {
+      const textContent = textNode.nodeValue || "";
+      const lowerTextContent = textContent.toLowerCase();
+
+      let matchIndex = lowerTextContent.indexOf(normalizedQuery);
+      let lastIndex = 0;
+
+      if (matchIndex === -1) {
+        return;
+      }
+
+      const fragment = document.createDocumentFragment();
+
+      while (matchIndex !== -1) {
+        if (matchIndex > lastIndex) {
+          fragment.appendChild(document.createTextNode(textContent.slice(lastIndex, matchIndex)));
+        }
+
+        const mark = document.createElement("mark");
+        mark.className = "search-match";
+        mark.dataset.transcriptMatch = "true";
+        mark.textContent = textContent.slice(matchIndex, matchIndex + query.length);
+
+        fragment.appendChild(mark);
+        searchMatches.push(mark);
+
+        lastIndex = matchIndex + query.length;
+        matchIndex = lowerTextContent.indexOf(normalizedQuery, lastIndex);
+      }
+
+      if (lastIndex < textContent.length) {
+        fragment.appendChild(document.createTextNode(textContent.slice(lastIndex)));
+      }
+
+      textNode.parentNode?.replaceChild(fragment, textNode);
+    });
+
+    if (searchMatches.length === 0) {
+      updateTranscriptSearchControls();
+      return;
+    }
+
+    if (preserveIndex && previousIndex >= 0 && previousIndex < searchMatches.length) {
+      currentMatchIndex = previousIndex;
+    } else {
+      currentMatchIndex = 0;
+    }
+
+    updateActiveSearchMatch(true);
+  }
+
+  function clearTranscriptSearch(): void {
+    if (!searchInput || !transcriptContainer) return;
+
+    searchInput.value = "";
+    unwrapTranscriptSearchMarks();
+
+    searchMatches = [];
+    currentMatchIndex = -1;
+
+    updateTranscriptSearchControls();
+
+    transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+    searchInput.focus();
+  }
+
+  function navigateTranscriptMatch(direction: 1 | -1): void {
+    if (searchMatches.length === 0) return;
+
+    currentMatchIndex =
+      (currentMatchIndex + direction + searchMatches.length) % searchMatches.length;
+
+    updateActiveSearchMatch(true);
+  }
+
+  searchInput?.addEventListener("input", () => {
+    if (searchDebounceTimer) {
+      globalThis.clearTimeout(searchDebounceTimer);
+    }
+
+    searchDebounceTimer = globalThis.setTimeout(() => {
+      executeTranscriptSearch(false);
+    }, 150);
+  });
+
+  searchInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      navigateTranscriptMatch(event.shiftKey ? -1 : 1);
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      clearTranscriptSearch();
+    }
+  });
+
+  searchClearBtn?.addEventListener("click", clearTranscriptSearch);
+
+  searchPrevBtn?.addEventListener("click", () => {
+    navigateTranscriptMatch(-1);
+  });
+
+  searchNextBtn?.addEventListener("click", () => {
+    navigateTranscriptMatch(1);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    const isSearchShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f";
+
+    if (!isSearchShortcut) return;
+
+    const transcriptTab = document.querySelector('[data-tab="transcript"]') as HTMLElement | null;
+
+    event.preventDefault();
+    transcriptTab?.click();
+
+    globalThis.setTimeout(() => {
+      searchInput?.focus();
+      searchInput?.select();
+    }, 0);
+  });
+
+  updateTranscriptSearchControls();
+
+  // Load sessions on tab switch
+  document.querySelector('[data-tab="sessions"]')?.addEventListener("click", loadMeetingHistory);
+  // Load history on tab switch
+  document.querySelector('[data-tab="history"]')?.addEventListener("click", loadMeetingHistory);
 });
