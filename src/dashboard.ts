@@ -1073,6 +1073,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     `;
   }
 
+  function maybeAppendTranscriptNotice() {
+    if (!transcriptContainer || renderedTranscriptCount !== 0) return;
+    const noticeText = truncatedNoticeHtml(
+      "transcript entries",
+      lastState?.truncatedCounts?.transcript,
+    );
+    if (!noticeText) return;
+    const noticeDiv = document.createElement("div");
+    noticeDiv.className = "truncated-notice";
+    noticeDiv.textContent = noticeText.replace(/<\/?[^>]+(>|$)/g, "");
+    transcriptContainer.appendChild(noticeDiv);
+  }
+
   function updateTranscript(transcript: TranscriptEntry[]) {
     if (!transcriptContainer) return;
 
@@ -1090,19 +1103,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       transcriptContainer.innerHTML = "";
     }
 
-    // Show truncation notice on full re-render
-    if (renderedTranscriptCount === 0) {
-      const noticeText = truncatedNoticeHtml(
-        "transcript entries",
-        lastState?.truncatedCounts?.transcript,
-      );
-      if (noticeText) {
-        const noticeDiv = document.createElement("div");
-        noticeDiv.className = "truncated-notice";
-        noticeDiv.textContent = noticeText.replace(/<\/?[^>]+(>|$)/g, "");
-        transcriptContainer.appendChild(noticeDiv);
-      }
-    }
+    maybeAppendTranscriptNotice();
 
     // Only render new entries that haven't been rendered yet
     if (transcript.length > renderedTranscriptCount) {

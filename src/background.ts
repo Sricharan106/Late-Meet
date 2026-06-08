@@ -458,7 +458,7 @@ function sanitizeParticipantName(value: string | null | undefined): string {
     .trim()
     .replace(/[\u0000-\u001F\u007F]/g, "") // strip null bytes and control chars
     .replace(/`{3,}/g, "") // strip triple-backtick prompt delimiters
-    .replace(/[<>{}]/g, " ") // neutralise HTML/template injection chars
+    .replace(/[<>{}]/g, " ") // neutralize HTML/template injection chars
     .slice(0, MAX_PARTICIPANT_NAME_LENGTH)
     .trim();
 }
@@ -609,6 +609,25 @@ async function broadcastStateUpdate(immediate = false) {
   }
 }
 
+function truncateOverflow(obj: Record<string, unknown>, kind: "storage" | "message") {
+  const payload = JSON.stringify(obj);
+  const bytes = new TextEncoder().encode(payload).byteLength;
+  const STORAGE_LIMIT_BYTES = 7 * 1024 * 1024;
+  const MESSAGE_LIMIT_BYTES = 48 * 1024;
+  const limit = kind === "storage" ? STORAGE_LIMIT_BYTES : MESSAGE_LIMIT_BYTES;
+
+  if (bytes <= limit) return;
+
+  console.warn(
+    `[LateMeet] ${kind} payload (${(bytes / 1024).toFixed(1)} KB) exceeds ${(limit / 1024 / (kind === "storage" ? 1024 : 1)).toFixed(1)} ${kind === "storage" ? "MB" : "KB"} limit — truncating`,
+  );
+  for (const key of Object.keys(obj)) {
+    if (Array.isArray(obj[key])) {
+      (obj as any)[key] = (obj as any)[key].slice(-25);
+    }
+  }
+}
+
 async function executeBroadcast() {
   const fullSnapshot = snapshot();
   const uiData = uiSnapshot();
@@ -621,38 +640,8 @@ async function executeBroadcast() {
     selfParticipantName,
   };
 
-  // Payload size guard: warn if storage payload exceeds 7 MB or message payload exceeds 48 KB
-  const storagePayload = JSON.stringify({
-    activeMeetingState: fullSnapshot,
-    activeMeetingGuards: guards,
-  });
-  const storageBytes = new TextEncoder().encode(storagePayload).byteLength;
-  const MESSAGE_LIMIT_BYTES = 48 * 1024;
-  const STORAGE_LIMIT_BYTES = 7 * 1024 * 1024;
-
-  if (storageBytes > STORAGE_LIMIT_BYTES) {
-    console.warn(
-      `[LateMeet] Storage payload (${(storageBytes / 1024).toFixed(1)} KB) exceeds ${(STORAGE_LIMIT_BYTES / 1024 / 1024).toFixed(1)} MB limit — truncating`,
-    );
-    for (const key of Object.keys(fullSnapshot)) {
-      if (Array.isArray((fullSnapshot as any)[key])) {
-        (fullSnapshot as any)[key] = (fullSnapshot as any)[key].slice(-25);
-      }
-    }
-  }
-
-  const msgPayload = JSON.stringify(uiData);
-  const msgBytes = new TextEncoder().encode(msgPayload).byteLength;
-  if (msgBytes > MESSAGE_LIMIT_BYTES) {
-    console.warn(
-      `[LateMeet] Message payload (${(msgBytes / 1024).toFixed(1)} KB) exceeds ${(MESSAGE_LIMIT_BYTES / 1024).toFixed(1)} KB limit — truncating`,
-    );
-    for (const key of Object.keys(uiData)) {
-      if (Array.isArray((uiData as any)[key])) {
-        (uiData as any)[key] = (uiData as any)[key].slice(-25);
-      }
-    }
-  }
+  truncateOverflow(fullSnapshot as unknown as Record<string, unknown>, "storage");
+  truncateOverflow(uiData as unknown as Record<string, unknown>, "message");
 
   try {
     await chrome.storage.local.set({
