@@ -1276,7 +1276,7 @@ async function startAudioCapture(
   }
   isStartingAudio = true;
 
-  const createdSession = !state.audioActive;
+  const createdSession = !state.isActive || !state.meetingId;
 
   try {
     await ensureOffscreenDocument();
