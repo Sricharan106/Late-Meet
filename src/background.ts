@@ -295,7 +295,8 @@ async function hydrateState() {
           stored &&
           typeof stored === "object" &&
           !Array.isArray(stored) &&
-          isSafeMergeKey(String(Object.getPrototypeOf(stored)))
+          (Object.getPrototypeOf(stored) === Object.prototype ||
+            Object.getPrototypeOf(stored) === null)
         ) {
           // Validate structure and sanitize arrays before merging to prevent
           // prototype pollution from corrupted or maliciously crafted storage.

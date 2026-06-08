@@ -27,10 +27,13 @@ function normalizeTimestamp(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value !== "string") return null;
 
-  const parsed = Number(value);
+  const trimmed = value.trim();
+  if (trimmed === "") return null;
+
+  const parsed = Number(trimmed);
   if (Number.isFinite(parsed)) return parsed;
 
-  const timestamp = Date.parse(value);
+  const timestamp = Date.parse(trimmed);
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
