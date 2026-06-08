@@ -1100,6 +1100,28 @@ document.addEventListener("DOMContentLoaded", async () => {
       md += `_No insights available_\n\n`;
     }
 
+    md += `## Timeline\n`;
+    if (state.timeline?.length) {
+      state.timeline.forEach((e) => {
+        md += `- [${formatDuration(e.elapsed || 0)}] ${e.event}\n`;
+      });
+      md += "\n";
+    } else {
+      md += `_No timeline events recorded_\n\n`;
+    }
+
+    md += `## Transcript\n`;
+    if (state.transcript?.length) {
+      const start =
+        state.startTime || (state.transcript[0] ? state.transcript[0].timestamp : Date.now());
+      state.transcript.forEach((t) => {
+        const elapsed = Math.max(0, Math.round((t.timestamp - start) / 1000));
+        md += `**[${formatDuration(elapsed)}] ${t.speaker}:** ${t.text}\n\n`;
+      });
+    } else {
+      md += `_No transcript captured during this session_\n\n`;
+    }
+
     return md;
   }
 
@@ -1179,6 +1201,28 @@ document.addEventListener("DOMContentLoaded", async () => {
       txt += "\n";
     } else {
       txt += `  (No insights available)\n\n`;
+    }
+
+    txt += `Timeline\n`;
+    if (state.timeline?.length) {
+      state.timeline.forEach((e) => {
+        txt += `  • [${formatDuration(e.elapsed || 0)}] ${e.event}\n`;
+      });
+      txt += "\n";
+    } else {
+      txt += `  (No timeline events recorded)\n\n`;
+    }
+
+    txt += `Transcript\n`;
+    if (state.transcript?.length) {
+      const start =
+        state.startTime || (state.transcript[0] ? state.transcript[0].timestamp : Date.now());
+      state.transcript.forEach((t) => {
+        const elapsed = Math.max(0, Math.round((t.timestamp - start) / 1000));
+        txt += `  [${formatDuration(elapsed)}] ${t.speaker}: ${t.text}\n\n`;
+      });
+    } else {
+      txt += `  (No transcript captured during this session)\n\n`;
     }
 
     return txt;
