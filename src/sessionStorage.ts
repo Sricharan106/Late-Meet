@@ -121,7 +121,12 @@ export function upsertSessionIndex(
  */
 async function getBytesInUse(storage: StorageArea, keys?: string | string[] | null) {
   if (!storage.getBytesInUse) return 0;
-  return storage.getBytesInUse(keys ?? null);
+  try {
+    return await storage.getBytesInUse(keys ?? null);
+  } catch (err) {
+    console.warn("[SessionStorage] Failed to get bytes in use:", err);
+    return 0;
+  }
 }
 
 /**
@@ -250,7 +255,12 @@ export async function persistMeetingSession(
     [sessionKey]: pendingSession,
     [SAVED_SESSION_INDEX_KEY]: upsertSessionIndex(currentIndex, pendingSession),
   });
-  const prunedIndex = await pruneSessionsForQuota(storage, currentIndex, incomingBytes);
+  let prunedIndex = currentIndex;
+  try {
+    prunedIndex = await pruneSessionsForQuota(storage, currentIndex, incomingBytes);
+  } catch (err) {
+    console.error("[SessionStorage] Failed to prune sessions for quota:", err);
+  }
   const nextIndex = upsertSessionIndex(prunedIndex, pendingSession);
 
   await storage.set({
