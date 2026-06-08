@@ -957,3 +957,30 @@ in the Software without restriction...
 _Made with 🖤 by the Late Meet community · [Report Bug](https://github.com/shouri123/Late-Meet/issues/new?template=bug_report.md) · [Request Feature](https://github.com/shouri123/Late-Meet/issues/new?template=feature_request.md) · [Join GSSoC 2026](https://gssoc.girlscript.tech/)_
 
 </div>
+
+
+---
+
+## Troubleshooting
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Transcription not starting | Microphone permission denied | Click the lock icon in Chrome address bar → Allow Microphone |
+| Extension popup shows "Not in a meeting" | Tab is not a Google Meet tab | Navigate to meet.google.com first |
+| API key error | Key not set or expired | Open extension Options and re-enter your API key |
+| Transcript stops mid-meeting | Chrome service worker restarted | Refresh the Meet tab and restart recording |
+| Speaker names show as "Unknown" | Non-ASCII names or Google Meet DOM change | Update the extension to the latest version |
+| Storage quota exceeded | Too many saved meetings | Open the dashboard and delete old sessions |
+
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Alt+Shift+R` | Start / Stop recording |
+| `Alt+Shift+P` | Pause / Resume transcription |
+| `Alt+Shift+S` | Generate meeting summary |
+| `Alt+Shift+E` | Export transcript |
+
+> **Note:** Shortcuts can be customized at `chrome://extensions/shortcuts`
