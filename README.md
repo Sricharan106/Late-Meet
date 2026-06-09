@@ -636,7 +636,6 @@ git push origin feature/your-feature-name
 | :---: | :--- | :--- |
 | [#671](https://github.com/shouri123/Late-Meet/issues/671) | docs: Generate inline JSDoc documentation for all utility functions in src/utils | General |
 | [#667](https://github.com/shouri123/Late-Meet/issues/667) | docs: Add a comprehensive developer setup guide and contributing guidelines | General |
-| [#666](https://github.com/shouri123/Late-Meet/issues/666) | refactor: Consolidate duplicate getSettings functions in options and dashboard | General |
 | [#665](https://github.com/shouri123/Late-Meet/issues/665) | refactor: Migrate remaining JavaScript prompt configurations to TypeScript | General |
 | [#664](https://github.com/shouri123/Late-Meet/issues/664) | test: Add unit test coverage reporting to GitHub Actions build checks | General |
 | [#663](https://github.com/shouri123/Late-Meet/issues/663) | test: Setup GitHub Actions workflow to run semantic PR title linter | General |
@@ -658,15 +657,10 @@ git push origin feature/your-feature-name
 
 | # | Title | Skills |
 | :---: | :--- | :--- |
-| [#672](https://github.com/shouri123/Late-Meet/issues/672) | test: Add stress tests for high-volume audio chunk processing under load | General |
-| [#669](https://github.com/shouri123/Late-Meet/issues/669) | feat: Add bundle size budget checker action to prevent dependency bloat | General |
-| [#668](https://github.com/shouri123/Late-Meet/issues/668) | test: Write integration tests for chrome.storage.session state recovery | General |
-| [#659](https://github.com/shouri123/Late-Meet/issues/659) | test: Add fuzz tests for input sanitization and script injection vectors | General |
 | [#658](https://github.com/shouri123/Late-Meet/issues/658) | fix: Guard against prototype pollution in state hydration of storage payloads | General |
 | [#657](https://github.com/shouri123/Late-Meet/issues/657) | fix: Prevent HTML injection and XSS by sanitizing participant names before rendering | General |
 | [#653](https://github.com/shouri123/Late-Meet/issues/653) | feat: Implement strict Content Security Policy (CSP) headers in manifest | General |
 | [#652](https://github.com/shouri123/Late-Meet/issues/652) | feat: Custom accent color picker in options page using color palette grid | General |
-| [#648](https://github.com/shouri123/Late-Meet/issues/648) | style: Implement responsive sidebar layout for dashboard panel | General |
 | [#645](https://github.com/shouri123/Late-Meet/issues/645) | feat: Support export of meeting sessions as PDF with clean styling template | General |
 | [#640](https://github.com/shouri123/Late-Meet/issues/640) | test: Add mock API integration tests for transcript refinement pipeline | General |
 | [#639](https://github.com/shouri123/Late-Meet/issues/639) | feat: Implement structured JSON mode output for transcript refinements | General |
@@ -679,20 +673,19 @@ git push origin feature/your-feature-name
 | [#626](https://github.com/shouri123/Late-Meet/issues/626) | feat: Add audio channels mapping and stereo-to-mono downmixing in offscreen | General |
 | [#625](https://github.com/shouri123/Late-Meet/issues/625) | fix: Prevent audio track clipping by implementing custom limiter Node | General |
 | [#623](https://github.com/shouri123/Late-Meet/issues/623) | feat: Implement adaptive Web Audio API noise gate for offscreen audio capture | General |
+| [#526](https://github.com/shouri123/Late-Meet/issues/526) | \[BUG\] Options page blocks non-secret settings saves when credential storage is locked | General |
 
 
 #### 🔴 Advanced — `level-3`
 
 | # | Title | Skills |
 | :---: | :--- | :--- |
+| [#666](https://github.com/shouri123/Late-Meet/issues/666) | refactor: Consolidate duplicate getSettings functions in options and dashboard | General |
 | [#662](https://github.com/shouri123/Late-Meet/issues/662) | feat: Implement secure backup partition file export with signature verification | General |
-| [#656](https://github.com/shouri123/Late-Meet/issues/656) | feat: Obfuscate API key storage inside chrome.storage.local using AES-GCM | General |
 | [#654](https://github.com/shouri123/Late-Meet/issues/654) | feat: Purge plaintext credential keys from RAM cache when inactivity timeout fires | General |
 | [#643](https://github.com/shouri123/Late-Meet/issues/643) | feat: Add animated canvas audio waveform visualizer inside popup during capture | General |
-| [#632](https://github.com/shouri123/Late-Meet/issues/632) | perf: Optimize Web Audio analyzer frequency analysis to reduce CPU overhead | General |
-| [#631](https://github.com/shouri123/Late-Meet/issues/631) | feat: Implement mute state synchronization between Google Meet DOM and offscreen recorder | General |
-| [#624](https://github.com/shouri123/Late-Meet/issues/624) | feat: Support multiple microphone device selection in onboarding and options | General |
 | [#610](https://github.com/shouri123/Late-Meet/issues/610) | Race Condition Between stopAudioCapture() and Offscreen Drain Orphans tabCapture Streams + Silently Drops Final Transcript Chunks | General |
+| [#526](https://github.com/shouri123/Late-Meet/issues/526) | \[BUG\] Options page blocks non-secret settings saves when credential storage is locked | General |
 
 
 </div>
