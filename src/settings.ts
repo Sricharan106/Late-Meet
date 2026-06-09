@@ -15,9 +15,9 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 function isValidHslComponent(hue: string, sat: string, light: string): boolean {
-  const h = parseInt(hue, 10);
-  const s = parseInt(sat, 10);
-  const l = parseInt(light, 10);
+  const h = Number.parseInt(hue, 10);
+  const s = Number.parseInt(sat, 10);
+  const l = Number.parseInt(light, 10);
   return h >= 0 && h <= 360 && s >= 0 && s <= 100 && l >= 0 && l <= 100;
 }
 
@@ -26,10 +26,10 @@ export function isValidAccent(value: string): boolean {
 
   if (/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(accent)) return true;
 
-  const commaMatch = accent.match(/^(\d{1,3})\s*,\s*(\d{1,3})%\s*,\s*(\d{1,3})%$/);
+  const commaMatch = /^(\d{1,3})\s*,\s*(\d{1,3})%\s*,\s*(\d{1,3})%$/.exec(accent);
   if (commaMatch) return isValidHslComponent(commaMatch[1], commaMatch[2], commaMatch[3]);
 
-  const spaceMatch = accent.match(/^(\d{1,3})\s+(\d{1,3})%\s+(\d{1,3})%$/);
+  const spaceMatch = /^(\d{1,3})\s+(\d{1,3})%\s+(\d{1,3})%$/.exec(accent);
   if (spaceMatch) return isValidHslComponent(spaceMatch[1], spaceMatch[2], spaceMatch[3]);
 
   return false;

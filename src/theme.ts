@@ -1,15 +1,9 @@
 // shared/theme.ts
-import {
-  getSettings,
-  isValidAccent,
-  normalizeSettings,
-  type Settings,
-  type ThemeMode,
-} from "./settings";
+import { getSettings, normalizeSettings, type Settings, type ThemeMode } from "./settings";
 
 // Re-exported for backward compatibility with existing importers (#666).
-export { getSettings, isValidAccent };
-export type { Settings };
+export { getSettings, isValidAccent } from "./settings";
+export type { Settings } from "./settings";
 
 // Mode Helper: Safe to evaluate anywhere
 function resolveTheme(theme: ThemeMode): "light" | "dark" {
