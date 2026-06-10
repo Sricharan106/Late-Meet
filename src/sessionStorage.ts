@@ -27,10 +27,13 @@ function normalizeTimestamp(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value !== "string") return null;
 
-  const parsed = Number(value);
+  const trimmed = value.trim();
+  if (trimmed === "") return null;
+
+  const parsed = Number(trimmed);
   if (Number.isFinite(parsed)) return parsed;
 
-  const timestamp = Date.parse(value);
+  const timestamp = Date.parse(trimmed);
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
@@ -44,8 +47,22 @@ function normalizeTimestamp(value: unknown): number | null {
 function asStoredSession(value: unknown): StoredSession | null {
   if (!value || typeof value !== "object") return null;
   const session = value as Partial<StoredSession> & { savedAt?: unknown };
+  if (typeof session.id !== "string" || session.id.trim() === "") {
+    return null;
+  }
   const savedAt = normalizeTimestamp(session.savedAt);
-  if (!session.id || savedAt === null) return null;
+  if (savedAt === null) {
+    return null;
+  }
+  if (session.duration !== undefined && typeof session.duration !== "number") {
+    return null;
+  }
+  if (session.transcript !== undefined && !Array.isArray(session.transcript)) {
+    return null;
+  }
+  if (session.timeline !== undefined && !Array.isArray(session.timeline)) {
+    return null;
+  }
   return { ...session, savedAt } as StoredSession;
 }
 
@@ -349,6 +366,52 @@ export async function deleteSavedMeetingSession(
     [SAVED_SESSION_INDEX_KEY]: indexedSessions.filter((session) => session.id !== sessionId),
     [SAVED_SESSIONS_LEGACY_KEY]: legacySessions,
   });
+}
+
+export async function deleteMultipleSavedMeetingSessions(
+  storage: StorageArea,
+  sessionIds: string[],
+): Promise<void> {
+  if (!Array.isArray(sessionIds) || sessionIds.length === 0) return;
+
+  const values = await storage.get([SAVED_SESSION_INDEX_KEY, SAVED_SESSIONS_LEGACY_KEY]);
+  const indexedSessions = Array.isArray(values[SAVED_SESSION_INDEX_KEY])
+    ? (values[SAVED_SESSION_INDEX_KEY].map(asStoredSession).filter(Boolean) as StoredSession[])
+    : [];
+  const legacySessions = Array.isArray(values[SAVED_SESSIONS_LEGACY_KEY])
+    ? values[SAVED_SESSIONS_LEGACY_KEY]
+    : [];
+
+  // Remove payload keys
+  const keys = sessionIds.map((id) => getSavedSessionKey(id));
+  await storage.remove(keys);
+
+  // Update index(s)
+  const nextIndex = indexedSessions.filter((s) => !sessionIds.includes(s.id));
+  const nextLegacy = Array.isArray(legacySessions)
+    ? legacySessions.filter((s: Partial<StoredSession>) => !sessionIds.includes(s.id as string))
+    : [];
+
+  await storage.set({
+    [SAVED_SESSION_INDEX_KEY]: nextIndex,
+    [SAVED_SESSIONS_LEGACY_KEY]: nextLegacy,
+  });
+}
+
+export async function deleteAllSavedMeetingSessions(storage: StorageArea): Promise<void> {
+  const values = await storage.get([SAVED_SESSION_INDEX_KEY, SAVED_SESSIONS_LEGACY_KEY]);
+  const indexedSessions = Array.isArray(values[SAVED_SESSION_INDEX_KEY])
+    ? (values[SAVED_SESSION_INDEX_KEY].map(asStoredSession).filter(Boolean) as StoredSession[])
+    : [];
+  const legacySessions = Array.isArray(values[SAVED_SESSIONS_LEGACY_KEY])
+    ? (values[SAVED_SESSIONS_LEGACY_KEY].map(asStoredSession).filter(Boolean) as StoredSession[])
+    : [];
+
+  const allIds = [...indexedSessions, ...legacySessions].map((s) => s.id);
+  const keys = allIds.map((id) => getSavedSessionKey(id));
+  if (keys.length > 0) await storage.remove(keys);
+
+  await storage.set({ [SAVED_SESSION_INDEX_KEY]: [], [SAVED_SESSIONS_LEGACY_KEY]: [] });
 }
 
 /**

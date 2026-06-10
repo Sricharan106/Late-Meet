@@ -11,6 +11,7 @@ import { initTheme } from "./theme.js";
 import { resolveManualMeetTab } from "./meetingTabs";
 import { startDashboardAudioCapture } from "./dashboardCapture";
 import { escapeHtml, formatDuration, sanitizeTopicStatus } from "./utils/domHelpers";
+import { sanitizeDataAttr } from "./utils/sanitize";
 
 initTheme();
 
@@ -1017,7 +1018,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   function createTranscriptEntryHTML(entry: TranscriptEntry): string {
     const timeStr = escapeHtml(entry.timestampLabel || formatDuration(entry.timestamp || 0));
     const speaker = escapeHtml(entry.speaker || "Unknown");
-    const initials = speaker
+    const initials = (entry.speaker || "Unknown")
       .split(" ")
       .filter(Boolean)
       .map((w) => w[0])
@@ -1036,6 +1037,14 @@ document.addEventListener("DOMContentLoaded", async () => {
           <div class="transcript-speaker">${speaker}</div>
           <div class="transcript-text">${text}</div>
         </div>
+        <button type="button" class="copy-transcript-btn" 
+                data-speaker="${speaker}" 
+                data-time="${timeStr}" 
+                data-message="${text}" 
+                title="Copy message to clipboard" 
+                aria-label="Copy message to clipboard">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
+        </button>
       </div>
     `;
   }
@@ -1472,20 +1481,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
       const markdown = generateMarkdown(state);
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(markdown);
-      } else {
-        const textArea = document.createElement("textarea");
-        textArea.value = markdown;
-        textArea.style.position = "fixed";
-        textArea.style.left = "-999999px";
-        textArea.style.top = "-999999px";
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        document.execCommand("copy");
-        textArea.remove();
-      }
+      await navigator.clipboard.writeText(markdown);
       showToast("Copied to clipboard", "success");
     } catch (err) {
       console.error(err);
@@ -1557,7 +1553,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           const actionCount = s.actionItems?.length || 0;
 
           return `
-          <div class="session-item" data-session-id="${s.id}">
+          <div class="session-item" data-session-id="${sanitizeDataAttr(s.id)}">
             <div class="session-item-header">
               <div>
                 <div class="session-item-date">${escapeHtml(date)} at ${escapeHtml(time)}</div>
@@ -1574,15 +1570,15 @@ document.addEventListener("DOMContentLoaded", async () => {
               <span>${actionCount} actions</span>
             </div>
             <div class="session-item-actions">
-              <button class="session-export-btn" data-session-id="${s.id}" title="Export as Markdown">
+              <button class="session-export-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Export as Markdown">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" x2="12" y1="15" y2="3"></line></svg>
                 Export
               </button>
-              <button class="session-export-btn session-download-btn" data-session-id="${s.id}" title="Download as Markdown File">
+              <button class="session-export-btn session-download-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Download as Markdown File">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" x2="12" y1="15" y2="3"></line></svg>
                 Download
               </button>
-              <button class="session-delete-btn" data-session-id="${s.id}" title="Delete session">
+              <button class="session-delete-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Delete session">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
                 Delete
               </button>
@@ -1963,6 +1959,74 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.querySelector('[data-tab="sessions"]')?.addEventListener("click", loadMeetingHistory);
   // Load history on tab switch
   document.querySelector('[data-tab="history"]')?.addEventListener("click", loadMeetingHistory);
+
+  // ——— Copy Transcript Message (Event Delegation) ———
+  transcriptContainer?.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    const btn = target.closest(".copy-transcript-btn") as HTMLButtonElement | null;
+    if (!btn) return;
+
+    e.stopPropagation();
+    const speaker = btn.dataset.speaker || "Unknown";
+    const time = btn.dataset.time || "";
+    const message = btn.dataset.message || "";
+
+    const copyText = `Speaker: ${speaker}\nTime: ${time}\nMessage: ${message}`;
+
+    navigator.clipboard
+      .writeText(copyText)
+      .then(() => showToast("Copied to clipboard!", "success"))
+      .catch((err) => {
+        console.error("Failed to copy transcript message:", err);
+        showToast("Failed to copy!", "error");
+      });
+  });
+
+  // ——— Copy Summary Button ———
+  document.getElementById("copy-summary-btn")?.addEventListener("click", async () => {
+    try {
+      const summaryEl = document.getElementById("dash-summary");
+      const text = summaryEl?.textContent?.trim() || "";
+      if (!text || text === "Waiting for conversation to begin...") {
+        showToast("No summary available to copy", "error");
+        return;
+      }
+      await navigator.clipboard.writeText(text);
+      showToast("Summary copied to clipboard!", "success");
+    } catch {
+      showToast("Failed to copy summary", "error");
+    }
+  });
+
+  // ——— Header Export Buttons ———
+  const headerMdBtn = document.getElementById("header-export-md-btn");
+  const headerPdfBtn = document.getElementById("header-export-pdf-btn");
+
+  if (headerMdBtn) {
+    headerMdBtn.addEventListener("click", async () => {
+      try {
+        const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+        if (!state) throw new Error("No meeting data available");
+
+        const markdown = generateMarkdown(state);
+        const filename = `meeting-summary-${new Date().toISOString().slice(0, 10)}.md`;
+
+        downloadFile(markdown, filename, "text/markdown");
+        showToast("Downloaded as .md file", "success");
+      } catch (err) {
+        showToast(
+          "Failed to export: " + (err instanceof Error ? err.message : String(err)),
+          "error",
+        );
+      }
+    });
+  }
+
+  if (headerPdfBtn) {
+    headerPdfBtn.addEventListener("click", () => {
+      showToast("PDF UI active! Ready for Phase 2 library integration.", "success");
+    });
+  }
 });
 
 // --- Empty State Utility ---
