@@ -28,6 +28,8 @@ type OffscreenMessage = {
  * document. The function resolves once the message has been sent; it does
  * **not** wait for the offscreen document to finish processing the chunk.
  *
+ * @deprecated No active callsites — reserved for future use. The current audio
+ *   pipeline uses the "OFFSCREEN_AUDIO_CHUNK" message type in background.ts instead.
  * @param chunk - An `ArrayBuffer` containing the raw audio data (e.g. a PCM
  *   or WebM segment captured via `chrome.tabCapture`).
  * @param tabId - The ID of the Chrome tab that is the audio source. Used by

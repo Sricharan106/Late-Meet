@@ -20,7 +20,7 @@ const ALLOWED_DOMAINS = [
  * Validates that a URL string is well-formed, uses HTTPS, and optionally
  * belongs to the trusted API domain allowlist.
  *
- * Two-stage validation:
+ * Three-stage validation:
  * 1. **Format check** – the string must parse as a valid URL.
  * 2. **Protocol check** – the scheme must be `https:`.
  * 3. **Allowlist check** *(optional)* – the hostname must exactly match or be
