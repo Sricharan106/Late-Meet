@@ -636,7 +636,6 @@ git push origin feature/your-feature-name
 | :---: | :--- | :--- |
 | [#667](https://github.com/shouri123/Late-Meet/issues/667) | docs: Add a comprehensive developer setup guide and contributing guidelines | General |
 | [#665](https://github.com/shouri123/Late-Meet/issues/665) | refactor: Migrate remaining JavaScript prompt configurations to TypeScript | General |
-| [#663](https://github.com/shouri123/Late-Meet/issues/663) | test: Setup GitHub Actions workflow to run semantic PR title linter | General |
 | [#661](https://github.com/shouri123/Late-Meet/issues/661) | feat: Add confirmation dialog popup before clearing all local data | General |
 | [#660](https://github.com/shouri123/Late-Meet/issues/660) | docs: Document extension permissions audit and privacy policy guidelines | General |
 | [#651](https://github.com/shouri123/Late-Meet/issues/651) | style: Add micro-animations (pulse, slide-in) to recording status indicators | General |
