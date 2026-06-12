@@ -425,20 +425,12 @@ export async function deleteAllSavedMeetingSessions(storage: StorageArea): Promi
 }
 
 /**
- * Writes a value to `chrome.storage.local` under the given key. Storage quota
- * errors and other failures are logged to the console instead of being thrown,
- * so callers are never interrupted by storage failures.
+ * Writes a value to `chrome.storage.local` under the given key.
+ * Errors (including quota errors) are rethrown so callers can detect and react
+ * to them — e.g. using `isStorageQuotaError` to identify quota exhaustion.
  * @param key - The storage key to write to.
  * @param value - The value to store.
  */
 export async function safeLocalStore(key: string, value: unknown): Promise<void> {
-  await new Promise<void>((resolve) => {
-    chrome.storage.local.set({ [key]: value }, () => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        console.error("[LateMeet] Storage write failed for key", key, ":", err.message);
-      }
-      resolve();
-    });
-  });
+  await chrome.storage.local.set({ [key]: value });
 }
