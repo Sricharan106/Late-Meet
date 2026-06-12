@@ -237,8 +237,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     card.style.top = `${top}px`;
     card.style.left = `${left}px`;
 
-    card.querySelector(".popup-tour-skip")?.addEventListener("click", () => void completePopupTour());
-    card.querySelector(".popup-tour-next")?.addEventListener("click", () => showPopupTourStep(stepIndex + 1));
+    card
+      .querySelector(".popup-tour-skip")
+      ?.addEventListener("click", () => void completePopupTour());
+    card
+      .querySelector(".popup-tour-next")
+      ?.addEventListener("click", () => showPopupTourStep(stepIndex + 1));
   }
 
   function getPopupMediaStreamId(tabId: number): Promise<string> {
