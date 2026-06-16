@@ -426,7 +426,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-       const credentialsToSave: { openai_api_key?: string; elevenlabs_api_key?: string } = {};
+        const credentialsToSave: { openai_api_key?: string; elevenlabs_api_key?: string } = {};
         if (openaiKey) credentialsToSave.openai_api_key = openaiKey;
         if (elevenlabsKey) credentialsToSave.elevenlabs_api_key = elevenlabsKey;
         if (Object.keys(credentialsToSave).length > 0) {
