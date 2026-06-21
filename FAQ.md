@@ -1,4 +1,4 @@
-If you are new to Late Meet, start with the README first, then use this FAQ for common setup,troubleshooting, privacy, and contribution questions.
+If you are new to Late Meet, start with the README first, then use this FAQ for common setup, troubleshooting, privacy, and contribution questions.
 
 # Frequently Asked Questions
 
